@@ -472,5 +472,5 @@ export const PROCESS_SCREENS: { id: ScreenId; label: string; group: string }[] =
   { id: "alarms", label: "Alarms", group: "System" },
   { id: "interlocks", label: "Interlocks", group: "System" },
   { id: "narratives", label: "Narratives", group: "System" },
-  { id: "symbols", label: "Flow Key", group: "System" },
+  { id: "symbols", label: "P&ID Symbols", group: "System" },
 ];

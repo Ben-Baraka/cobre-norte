@@ -4,6 +4,7 @@ import { RUN_TRIPS, startChecks } from "../model/permissives";
 import type { AreaId } from "../model/types";
 import { AREAS } from "../model/types";
 import { fmt, limitOf } from "./format";
+import { SYMBOL_CARDS, SymbolTile } from "./pid";
 import { usePlant } from "./state";
 
 export function Setpoints() {
@@ -305,35 +306,31 @@ export function Narratives() {
   );
 }
 
-const FLOW_KEY = [
-  ["#e7c48a", "Ore and mills"],
-  ["#e3b184", "Slurry equipment"],
-  ["#f0c56a", "Concentrate"],
-  ["#d9cfc4", "Tailings"],
-  ["#9ed0ea", "Water"],
-  ["#d7e0ea", "Air"],
-  ["#d7e3a4", "Reagents"],
-  ["#c9d4e0", "Electrical"],
-];
-
 export function SymbolLegend() {
+  const groups = [...new Set(SYMBOL_CARDS.map((card) => card.group))];
   return (
     <>
       <div className="pagehead">
         <div>
-          <div className="kicker">How to read a sheet</div>
-          <h1>Flow key</h1>
-          <p>Each area is a left-to-right process layout. A line leaves one block and the arrow arrives at the next. The italic label is the stream. A green border means that drive is running. A red border means it is tripped. Click a block to open it.</p>
+          <div className="kicker">ISA-5.1</div>
+          <h1>P&ID symbols</h1>
+          <p>The area sheets use these symbols, set out in process order. A line leaves one symbol and the arrow arrives at the next. The italic name is the stream. Click a symbol to open it.</p>
         </div>
       </div>
-      <div className="symbol-grid">
-        {FLOW_KEY.map(([color, name]) => (
-          <div key={name} className="symbol-card">
-            <div className="swatch" style={{ background: color }} />
-            <b>{name}</b>
+      {groups.map((group) => (
+        <section key={group}>
+          <h2>{group}</h2>
+          <div className="symbol-grid">
+            {SYMBOL_CARDS.filter((card) => card.group === group).map((card) => (
+              <div key={card.id} className="symbol-card">
+                <SymbolTile id={card.id} />
+                <b>{card.name}</b>
+                <span>{card.note}</span>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        </section>
+      ))}
     </>
   );
 }
