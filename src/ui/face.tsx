@@ -51,16 +51,24 @@ export function FaceHost() {
   const target = stack[stack.length - 1];
   if (!target) return null;
   return (
-    <aside className="face" aria-label="Faceplate">
-      <div className="fp">
-        {stack.length > 1 ? (
-          <button className="linkish" onClick={closeFace}>
-            Back
-          </button>
-        ) : null}
-        <FaceBody target={target} />
-      </div>
-    </aside>
+    <div className="popup-back" onClick={closeFace} role="presentation">
+      <aside
+        className="face popup"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Faceplate"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="fp">
+          {stack.length > 1 ? (
+            <button className="linkish" onClick={closeFace}>
+              Back
+            </button>
+          ) : null}
+          <FaceBody target={target} />
+        </div>
+      </aside>
+    </div>
   );
 }
 

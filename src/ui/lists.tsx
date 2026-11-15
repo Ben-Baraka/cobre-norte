@@ -3,6 +3,7 @@ import { MODEL } from "../model/build";
 import type { Point } from "../model/types";
 import { AREA_BY_ID, AREAS } from "../model/types";
 import { downloadCsv, fmt, motorWord } from "./format";
+import { SingleLine } from "./sld";
 import { usePlant } from "./state";
 
 type Sort<T> = { key: keyof T; dir: 1 | -1 };
@@ -252,73 +253,16 @@ export function LoadList() {
 }
 
 export function PowerSystem() {
-  const { live, open } = usePlant();
   return (
     <>
       <div className="pagehead">
         <div>
           <div className="kicker">66 / 11 / 3.3 / 0.69 / 0.415 kV</div>
           <h1>Power system</h1>
-          <p>Two 45 MVA 66/11 kV transformers feed the mill buses. Essential loads sit on EMCC-415, with EDG-991 as the standby set. Loading uses running kW against transformer kVA at 0.9 power factor.</p>
+          <p>Single line from the 66 kV incomers to the unit substations. A filled breaker is closed. Click a machine to open it.</p>
         </div>
       </div>
-      <div className="layout-2">
-        <div className="panel">
-          <h2>Incoming</h2>
-          <MetaLine label="Grid" value="66 kV, two incomers" />
-          <MetaLine label="TX-101A" value="45 MVA → 11 kV Bus A" />
-          <MetaLine label="TX-101B" value="45 MVA → 11 kV Bus B" />
-          <MetaLine label="EDG-991" value={`${motorWord(live.motors[MODEL.motorByTag.get("EDG-991")!.index].state)} · 1,250 kW standby`} />
-          <button className="linkish" onClick={() => open({ kind: "motor", tag: "EDG-991" })}>Open diesel faceplate</button>
-        </div>
-        <div className="panel">
-          <h2>Bus loading</h2>
-          <div className="bars">
-            {MODEL.buses.map((bus) => {
-              const loads = MODEL.motors.filter((m) => m.bus === bus.id && m.start !== "Diesel");
-              const kw = loads.reduce((sum, m) => sum + live.motors[m.index].kw, 0);
-              const cap = bus.mva * 1000 * 0.9;
-              const pct = (kw / cap) * 100;
-              return (
-                <div className="barline" key={bus.id}>
-                  <span>{bus.name}</span>
-                  <div className="track"><span className={pct > 90 ? "hot" : ""} style={{ width: `${Math.min(100, pct)}%` }} /></div>
-                  <span>{fmt(pct, 0)}%</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-      {MODEL.buses.map((bus) => {
-        const loads = MODEL.motors.filter((m) => m.bus === bus.id && m.kw >= 132 && m.start !== "Static");
-        return (
-          <div className="panel" key={bus.id} style={{ marginTop: 10 }}>
-            <h2>{bus.name} · {bus.from}</h2>
-            <div className="tiles">
-              {loads.map((motor) => {
-                const rt = live.motors[motor.index];
-                return (
-                  <button key={motor.tag} className="tile" onClick={() => open({ kind: "motor", tag: motor.tag })}>
-                    <small>{motor.tag}</small>
-                    <b>{fmt(rt.kw, 0)} kW</b>
-                    <span className="sub">{motorWord(rt.state)} · {fmt(motor.kw, 0)} kW rated</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
+      <SingleLine />
     </>
-  );
-}
-
-function MetaLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="check">
-      <span>{label}</span>
-      <span>{value}</span>
-    </div>
   );
 }
