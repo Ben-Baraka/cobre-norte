@@ -21,16 +21,22 @@ Use Postgres 15 or newer.
 
 ### macOS
 
+Postgres 18 from the postgresql.org installer or from Postgres.app is enough. Homebrew is not required.
+
+The installer does not put `psql` on the command path. Use the full path, or open the shell the installer provides.
+
+Installer from postgresql.org (Postgres 18):
+
 ```
-brew install postgresql@17
-brew services start postgresql@17
+/Library/PostgreSQL/18/bin/psql -U postgres
 ```
 
-If `psql` is not found, add the brew path once in that terminal:
+Enter the password you chose while installing Postgres. If that file is missing, the other common app is Postgres.app: click the elephant in the menu bar and choose Open psql. That window is already connected.
+
+If the server is not running, open Postgres.app and start it, or start the installed server with:
 
 ```
-echo 'export PATH="/opt/homebrew/opt/postgresql@17/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
+sudo /Library/PostgreSQL/18/bin/pg_ctl -D /Library/PostgreSQL/18/data start
 ```
 
 ### Linux
@@ -43,7 +49,7 @@ sudo service postgresql start
 
 ## 2. Create the database
 
-In `psql`, as a superuser (`postgres` on Windows and Linux, your macOS user after Homebrew):
+In the `psql` window from step 1 (`postgres` on Windows, Linux, and the Mac installer; the account Postgres.app already opened):
 
 ```sql
 create user cobre with password 'choose-a-password';
@@ -94,10 +100,10 @@ psql "postgresql://cobre:choose-a-password@localhost:5432/cobre_norte"
 select count(*) as io_points from cobre.io_points;
 select count(*) as motors from cobre.motors;
 select tag, description, io_type, address from cobre.io_list where area_id = 'sag' order by tag limit 20;
-select tag, kw, bus_id, state, kw as live_kw
-from cobre.load_list
-join cobre.motor_readings using (tag)
-order by kw desc
+select tag, l.kw as rated_kw, bus_id, state, r.kw as live_kw
+from cobre.load_list l
+join cobre.motor_readings r using (tag)
+order by l.kw desc
 limit 15;
 select tag, eu, ll, l, h, hh from cobre.alarm_setpoints where hh is not null order by tag limit 15;
 select kind, motor_tag, cause, healthy from cobre.interlocks where not healthy order by motor_tag;
