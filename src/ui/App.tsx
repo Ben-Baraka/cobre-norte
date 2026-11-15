@@ -2,11 +2,12 @@ import { useState } from "react";
 import { MODEL } from "../model/build";
 import type { AreaId, ScreenId } from "../model/types";
 import { AREA_BY_ID, PLCS, PROCESS_SCREENS } from "../model/types";
+import { Interlocks, Narratives, Setpoints, SymbolLegend } from "./docs";
 import { FaceHost } from "./face";
 import { fmtTime, limitOf } from "./format";
 import { IoList, LoadList, PowerSystem } from "./lists";
 import { Alarms, Trends } from "./monitor";
-import { SCENES, SceneView, areaOfScreen } from "./mimic";
+import { PidView, SHEETS, areaOfScreen } from "./pid";
 import { Overview, areaTone } from "./overview";
 import { PlantProvider, usePlant } from "./state";
 
@@ -126,8 +127,12 @@ function Screen({ id }: { id: ScreenId }) {
   if (id === "io") return <IoList />;
   if (id === "loads") return <LoadList />;
   if (id === "power") return <PowerSystem />;
+  if (id === "setpoints") return <Setpoints />;
   if (id === "trends") return <Trends />;
   if (id === "alarms") return <Alarms />;
+  if (id === "interlocks") return <Interlocks />;
+  if (id === "narratives") return <Narratives />;
+  if (id === "symbols") return <SymbolLegend />;
   const area = areaOfScreen(id);
   if (!area) return <Overview />;
   return <AreaScreen id={area} />;
@@ -135,17 +140,17 @@ function Screen({ id }: { id: ScreenId }) {
 
 function AreaScreen({ id }: { id: Exclude<AreaId, "sys"> }) {
   const area = AREA_BY_ID[id];
-  const scene = SCENES[id];
+  const sheet = SHEETS[id];
   return (
     <>
       <div className="pagehead">
         <div>
-          <div className="kicker">{area.code} · {area.plc}</div>
+          <div className="kicker">{sheet.drawing} · {area.plc}</div>
           <h1>{area.name}</h1>
-          <p>{scene.note}</p>
+          <p>{sheet.note}</p>
         </div>
       </div>
-      <SceneView scene={scene} />
+      <PidView sheet={sheet} />
       <Tiles area={id} />
     </>
   );

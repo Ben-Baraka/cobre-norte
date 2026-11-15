@@ -18,7 +18,11 @@ export type ScreenId =
   | "loads"
   | "power"
   | "trends"
-  | "alarms";
+  | "alarms"
+  | "setpoints"
+  | "interlocks"
+  | "narratives"
+  | "symbols";
 
 export type EquipKind =
   | "bin"
@@ -463,6 +467,10 @@ export const PROCESS_SCREENS: { id: ScreenId; label: string; group: string }[] =
   { id: "io", label: "IO List", group: "Lists" },
   { id: "loads", label: "Load List", group: "Lists" },
   { id: "power", label: "Power System", group: "Lists" },
+  { id: "setpoints", label: "Alarm Setpoints", group: "Lists" },
   { id: "trends", label: "Trends", group: "System" },
   { id: "alarms", label: "Alarms", group: "System" },
+  { id: "interlocks", label: "Interlocks", group: "System" },
+  { id: "narratives", label: "Narratives", group: "System" },
+  { id: "symbols", label: "P&ID Symbols", group: "System" },
 ];

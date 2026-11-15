@@ -4,7 +4,7 @@ import type { Live, ScreenId, Target } from "../model/types";
 
 const SCREENS = new Set<ScreenId>([
   "overview", "crush", "stock", "sag", "ball", "rough", "clean", "conc", "tails", "reag", "util",
-  "io", "loads", "power", "trends", "alarms",
+  "io", "loads", "power", "setpoints", "trends", "alarms", "interlocks", "narratives", "symbols",
 ]);
 
 function readHash(): ScreenId {

@@ -36,7 +36,7 @@ export function Overview() {
         <div>
           <div className="kicker">Concentrator 1 · 42,000 t/d design</div>
           <h1>Plant overview</h1>
-          <p>Fresh feed to concentrate and tailings. Values move with the equipment you start and stop.</p>
+          <p>Fresh feed to concentrate and tailings. Open an area for its P&ID. Values move with the equipment you start and stop.</p>
         </div>
         <button className="btn" onClick={() => open({ kind: "basis" })}>Basis of design</button>
       </div>
