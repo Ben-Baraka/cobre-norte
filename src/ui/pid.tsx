@@ -1,63 +1,74 @@
 import type { ReactNode } from "react";
 import { MODEL } from "../model/build";
-import type { AreaId, MotorState, Target } from "../model/types";
-import { fmt, limitOf } from "./format";
+import type { AreaId, Live, MotorState, Target } from "../model/types";
+import { fmt } from "./format";
 import { usePlant } from "./state";
 
-type Fluid = "slurry" | "water" | "conc" | "tails" | "reag" | "air";
-type Loc = "field" | "board" | "panel" | "dcs" | "computer";
-type Head = "dished" | "hopper" | "open" | "cone";
-type ValveForm = "control" | "gate" | "globe" | "check" | "butterfly" | "ball";
-type Act = "air" | "motor" | "solenoid" | "hand";
+type Tone = "ore" | "slurry" | "water" | "conc" | "tails" | "air" | "reag" | "power";
 
-type Item =
-  | { k: "line"; d: string; fluid: Fluid; run?: string; branch?: boolean }
-  | { k: "signal"; d: string }
-  | { k: "bubble"; x: number; y: number; tag: string; loc: Loc }
-  | { k: "vessel"; x: number; y: number; w: number; h: number; tag: string; head: Head; fluid?: Fluid; level?: string; drive?: string; agitator?: boolean }
-  | { k: "pump"; x: number; y: number; tag: string; drive?: string; dir?: "e" | "n" }
-  | { k: "valve"; x: number; y: number; tag: string; form: ValveForm; act?: Act }
-  | { k: "conveyor"; x: number; y: number; w: number; tag: string; drive?: string }
-  | { k: "crusher"; x: number; y: number; tag: string; drive?: string }
-  | { k: "mill"; x: number; y: number; w: number; tag: string; drive?: string }
-  | { k: "cyclone"; x: number; y: number; tag: string }
-  | { k: "cell"; x: number; y: number; tag: string; drive?: string }
-  | { k: "column"; x: number; y: number; tag: string }
-  | { k: "thickener"; x: number; y: number; r: number; tag: string; drive?: string }
-  | { k: "filter"; x: number; y: number; tag: string; drive?: string }
-  | { k: "fan"; x: number; y: number; tag: string; drive?: string }
-  | { k: "compressor"; x: number; y: number; tag: string; drive?: string }
-  | { k: "diesel"; x: number; y: number; tag: string; drive?: string }
-  | { k: "magnet"; x: number; y: number; tag: string }
-  | { k: "detector"; x: number; y: number; tag: string }
-  | { k: "text"; x: number; y: number; text: string };
+interface Unit {
+  tag: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  title: string;
+  tone: Tone;
+  drive?: string;
+  read?: string;
+}
+
+interface Pipe {
+  d: string;
+  label?: string;
+  lx?: number;
+  ly?: number;
+  run?: string;
+  kind?: "process" | "water" | "air" | "recycle";
+}
 
 interface Sheet {
   note: string;
   drawing: string;
-  items: Item[];
+  units: Unit[];
+  pipes: Pipe[];
 }
 
-const INK = "#c5d2de";
-const DIM = "#8ea0b3";
-const PAPER = "#101820";
+const FILL: Record<Tone, string> = {
+  ore: "#e7c48a",
+  slurry: "#e3b184",
+  water: "#9ed0ea",
+  conc: "#f0c56a",
+  tails: "#d9cfc4",
+  air: "#d7e0ea",
+  reag: "#d7e3a4",
+  power: "#c9d4e0",
+};
 
-function stateColor(state?: MotorState): string {
-  if (state === "running") return "#3cba7c";
-  if (state === "starting" || state === "stopping") return "#e2b340";
-  if (state === "tripped") return "#e15b5b";
-  return "#8b97a6";
-}
-
-function motorOf(tag: string | undefined, motors: { state: MotorState }[]): MotorState | undefined {
+function stateOf(tag: string | undefined, live: Live): MotorState | undefined {
   if (!tag) return undefined;
   const spec = MODEL.motorByTag.get(tag);
-  return spec ? motors[spec.index].state : undefined;
+  return spec ? live.motors[spec.index].state : undefined;
+}
+
+function strokeOf(state?: MotorState): string {
+  if (state === "running") return "#1f7a4d";
+  if (state === "starting" || state === "stopping") return "#a97812";
+  if (state === "tripped") return "#b43333";
+  if (state === "stopped") return "#5c6b7a";
+  return "#243140";
+}
+
+function reading(tag: string | undefined, live: Live): string | null {
+  if (!tag) return null;
+  const point = MODEL.byTag.get(tag);
+  if (!point) return null;
+  return `${fmt(live.values[point.index], point.dec)} ${point.eu}`;
 }
 
 function targetFor(tag: string): Target | null {
-  if (MODEL.motorByTag.has(tag)) return { kind: "motor", tag };
   if (MODEL.equipByTag.has(tag)) return { kind: "equip", tag };
+  if (MODEL.motorByTag.has(tag)) return { kind: "motor", tag };
   if (MODEL.valves.some((valve) => valve.tag === tag)) return { kind: "valve", tag };
   const point = MODEL.byTag.get(tag);
   if (point) return { kind: point.words ? "discrete" : "analog", tag };
@@ -75,920 +86,411 @@ function Hit({ tag, children }: { tag: string; children: ReactNode }) {
   );
 }
 
-function Tag({ x, y, tag }: { x: number; y: number; tag: string }) {
+function FlowUnit({ unit, live }: { unit: Unit; live: Live }) {
+  const state = stateOf(unit.drive ?? unit.tag, live);
+  const value = reading(unit.read, live);
+  const cx = unit.x + unit.w / 2;
+  const titleY = value ? unit.y + 16 : unit.y + unit.h / 2 - 2;
+  const tagY = value ? unit.y + 30 : unit.y + unit.h / 2 + 14;
   return (
-    <text x={x} y={y} textAnchor="middle" fill={INK} fontSize="11">
-      {tag}
-    </text>
-  );
-}
-
-function Motor({ x, y, tag, state }: { x: number; y: number; tag?: string; state?: MotorState }) {
-  const stroke = stateColor(state);
-  const body = (
-    <g>
-      <circle cx={x} cy={y} r="11" fill={PAPER} stroke={stroke} strokeWidth="1.4" />
-      <text x={x} y={y + 4} textAnchor="middle" fill={stroke} fontSize="11" fontFamily="IBM Plex Mono, monospace">
-        M
+    <Hit tag={unit.tag}>
+      <rect x={unit.x} y={unit.y} width={unit.w} height={unit.h} rx="3" fill={FILL[unit.tone]} stroke={strokeOf(state)} strokeWidth={state ? 2.4 : 1.4} />
+      <text x={cx} y={titleY} textAnchor="middle" fill="#1c2833" fontSize="13" fontWeight={600}>
+        {unit.title}
       </text>
-    </g>
-  );
-  return tag ? <Hit tag={tag}>{body}</Hit> : body;
-}
-
-function BubbleGlyph({ loc, alarm }: { loc: Loc; alarm: boolean }) {
-  const stroke = alarm ? "#e15b5b" : INK;
-  if (loc === "computer") {
-    return <polygon points="0,-18 16,0 0,18 -16,0" fill={PAPER} stroke={stroke} />;
-  }
-  return (
-    <g>
-      {loc === "dcs" ? <rect x="-18" y="-18" width="36" height="36" fill={PAPER} stroke={stroke} /> : null}
-      <circle r="15" fill={PAPER} stroke={stroke} />
-      {loc === "board" ? <line x1="-15" y1="0" x2="15" y2="0" stroke={stroke} /> : null}
-      {loc === "panel" ? (
-        <>
-          <line x1="-15" y1="-3" x2="15" y2="-3" stroke={stroke} />
-          <line x1="-15" y1="3" x2="15" y2="3" stroke={stroke} />
-        </>
+      <text x={cx} y={tagY} textAnchor="middle" fill="#3d4e5e" fontSize="11">
+        {unit.tag}
+      </text>
+      {value ? (
+        <text x={cx} y={unit.y + unit.h - 8} textAnchor="middle" fill="#143246" fontSize="12" fontFamily="IBM Plex Mono, monospace">
+          {value}
+        </text>
       ) : null}
-    </g>
+    </Hit>
   );
-}
-
-function bowtie() {
-  return (
-    <g>
-      <polygon points="-13,-8 0,0 -13,8" fill={PAPER} stroke={INK} />
-      <polygon points="13,-8 0,0 13,8" fill={PAPER} stroke={INK} />
-    </g>
-  );
-}
-
-function Actuator({ act }: { act?: Act }) {
-  if (act === "motor") {
-    return (
-      <g>
-        <line x1="0" y1="-8" x2="0" y2="-16" stroke={INK} />
-        <circle cy="-26" r="9" fill={PAPER} stroke={INK} />
-        <text y="-23" textAnchor="middle" fill={INK} fontSize="9">M</text>
-      </g>
-    );
-  }
-  if (act === "solenoid") {
-    return (
-      <g>
-        <line x1="0" y1="-8" x2="0" y2="-16" stroke={INK} />
-        <rect x="-8" y="-32" width="16" height="16" fill={PAPER} stroke={INK} />
-        <text y="-21" textAnchor="middle" fill={INK} fontSize="9">S</text>
-      </g>
-    );
-  }
-  if (act === "hand") {
-    return (
-      <g>
-        <line x1="0" y1="-8" x2="0" y2="-20" stroke={INK} />
-        <line x1="-8" y1="-20" x2="8" y2="-20" stroke={INK} />
-      </g>
-    );
-  }
-  return (
-    <g>
-      <line x1="0" y1="-8" x2="0" y2="-16" stroke={INK} />
-      <path d="M -9,-16 A 9 9 0 0 1 9,-16 Z" fill={PAPER} stroke={INK} />
-    </g>
-  );
-}
-
-function ValveGlyph({ form, act }: { form: ValveForm; act?: Act }) {
-  return (
-    <g>
-      {form === "control" ? <Actuator act={act ?? "air"} /> : null}
-      {form === "check" ? (
-        <g>
-          <polygon points="-12,-8 4,0 -12,8" fill={PAPER} stroke={INK} />
-          <line x1="6" y1="-9" x2="6" y2="9" stroke={INK} />
-        </g>
-      ) : (
-        bowtie()
-      )}
-      {form === "gate" ? <line x1="0" y1="-9" x2="0" y2="9" stroke={INK} /> : null}
-      {form === "globe" ? <circle r="3.5" fill={INK} /> : null}
-      {form === "ball" ? <circle r="4" fill={PAPER} stroke={INK} /> : null}
-      {form === "butterfly" ? <line x1="-6" y1="-7" x2="6" y2="7" stroke={INK} /> : null}
-    </g>
-  );
-}
-
-function PumpGlyph({ dir, stroke }: { dir: "e" | "n"; stroke: string }) {
-  const rot = dir === "n" ? -90 : 0;
-  return (
-    <g transform={`rotate(${rot})`} stroke={stroke}>
-      <circle r="16" fill={PAPER} strokeWidth="1.4" />
-      <path d="M 4,-9 L 22,0 L 4,9 Z" fill={PAPER} strokeWidth="1.4" />
-      <path d="M -8,5 Q 0,-6 7,4" fill="none" strokeWidth="1.2" />
-    </g>
-  );
-}
-
-function levelFill(w: number, h: number, level: number | undefined, fluid?: Fluid) {
-  const pct = level == null ? 0.45 : Math.max(0.04, Math.min(0.96, level / 100));
-  const color = fluid === "water" ? "#1f6f8a" : fluid === "conc" ? "#c4893a" : fluid === "tails" ? "#6a6158" : fluid === "reag" ? "#5f6b38" : "#8a5a32";
-  const top = h * (1 - pct);
-  return <rect x="3" y={top} width={w - 6} height={h * pct - 3} fill={color} opacity="0.85" />;
 }
 
 export function PidView({ sheet }: { sheet: Sheet }) {
   const { live } = usePlant();
   return (
     <div className="mimic-wrap">
-      <svg className="pid" viewBox="0 0 1280 720">
-        <rect width="1280" height="720" fill="#0c141b" />
-        {sheet.items.filter((item) => item.k === "line" || item.k === "signal").map((item, i) => {
-          if (item.k === "signal") return <path key={i} d={item.d} className="signal" />;
-          const running = !item.run || motorOf(item.run, live.motors) === "running";
-          const cls = `pipe ${item.fluid}${item.branch ? " branch" : ""}${running ? " flow" : ""}`;
-          return <path key={i} d={item.d} className={cls} />;
+      <svg className="pid" viewBox="0 0 1180 640">
+        <rect width="1180" height="640" fill="#f6f3ee" />
+        <defs>
+          <marker id="arr" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+            <path d="M0,0 L9,4.5 L0,9 Z" fill="#243140" />
+          </marker>
+          <marker id="arr-water" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+            <path d="M0,0 L9,4.5 L0,9 Z" fill="#1d6284" />
+          </marker>
+          <marker id="arr-air" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+            <path d="M0,0 L9,4.5 L0,9 Z" fill="#5c6b7a" />
+          </marker>
+        </defs>
+        {sheet.pipes.map((pipe, index) => {
+          const running = !pipe.run || stateOf(pipe.run, live) === "running";
+          const stroke = pipe.kind === "water" ? "#1d6284" : pipe.kind === "air" ? "#5c6b7a" : "#243140";
+          const marker = pipe.kind === "water" ? "url(#arr-water)" : pipe.kind === "air" ? "url(#arr-air)" : "url(#arr)";
+          return (
+            <path
+              key={index}
+              d={pipe.d}
+              fill="none"
+              stroke={stroke}
+              strokeWidth={pipe.kind === "recycle" ? 1.6 : 2.2}
+              strokeDasharray={!running || pipe.kind === "recycle" ? "7 5" : undefined}
+              markerEnd={marker}
+            />
+          );
         })}
-        {sheet.items.map((item, i) => (
-          <SheetItem key={i} item={item} />
+        {sheet.units.map((unit) => (
+          <FlowUnit key={unit.tag + unit.x} unit={unit} live={live} />
         ))}
-        <g>
-          <rect x="968" y="648" width="292" height="58" fill={PAPER} stroke="#2c3d4e" />
-          <text x="980" y="666" fill={INK} fontSize="11">COBRE NORTE · TRAINING P&ID</text>
-          <text x="980" y="682" fill={DIM} fontSize="11">{sheet.drawing} · REV A</text>
-          <text x="980" y="698" fill={DIM} fontSize="10">ISA-5.1 symbols · sample data</text>
-        </g>
+        {sheet.pipes.map((pipe, index) => (
+          pipe.label ? (
+            <text key={`l${index}`} x={pipe.lx} y={pipe.ly} fill="#1c2833" fontSize="12" fontStyle="italic" stroke="#f6f3ee" strokeWidth="4" paintOrder="stroke">
+              {pipe.label}
+            </text>
+          ) : null
+        ))}
+        <text x="24" y="632" fill="#5c6b7a" fontSize="12">
+          {sheet.drawing} · arrows follow the process · green border running · red border tripped
+        </text>
       </svg>
-      <div className="legend">
-        <span><i className="sw run" /> Running</span>
-        <span><i className="sw stop" /> Stopped</span>
-        <span><i className="sw trip" /> Tripped</span>
-        <span><i className="sw slurry" /> Slurry</span>
-        <span><i className="sw water" /> Water</span>
-        <span><i className="sw air" /> Air</span>
-        <span>Circle, field. Line through the circle, central panel. Square and circle, DCS. Diamond, computer. Dashed line, electrical signal.</span>
-      </div>
     </div>
   );
 }
 
-function SheetItem({ item }: { item: Item }) {
-  const { live } = usePlant();
-  if (item.k === "line" || item.k === "signal") return null;
-  if (item.k === "text") {
-    return (
-      <text x={item.x} y={item.y} fill={DIM} fontSize="11">
-        {item.text}
-      </text>
-    );
-  }
-  if (item.k === "bubble") {
-    const loop = MODEL.loopById.get(item.tag);
-    const point = MODEL.byTag.get(item.tag) ?? (loop ? MODEL.byTag.get(loop.pv) : undefined);
-    const value = point ? live.values[point.index] : undefined;
-    const shown = loop ? live.loops[loop.index].sp : value;
-    const alarm = point && value != null && (limitOf(point, value) != null || (point.alarmWhen != null && (value >= 0.5 ? 1 : 0) === point.alarmWhen));
-    const [fn, ...rest] = item.tag.split("-");
-    const num = rest.join("-");
-    const click = point?.tag ?? item.tag;
-    return (
-      <Hit tag={click}>
-        <g transform={`translate(${item.x} ${item.y})`}>
-          <BubbleGlyph loc={item.loc} alarm={!!alarm} />
-          <text y={num ? -1 : 3} textAnchor="middle" fill={INK} fontSize="8">{fn}</text>
-          {num ? <text y="9" textAnchor="middle" fill={DIM} fontSize="7">{num.length > 8 ? num.slice(0, 8) : num}</text> : null}
-          {point && shown != null ? (
-            <text y="-22" textAnchor="middle" fill={alarm ? "#ffb4b4" : "#79d0e6"} fontSize="10" fontFamily="IBM Plex Mono, monospace">
-              {fmt(shown, point.dec)}
-            </text>
-          ) : null}
-        </g>
-      </Hit>
-    );
-  }
-
-  const drive = "drive" in item ? item.drive : undefined;
-  const state = motorOf(drive, live.motors);
-  const stroke = stateColor(state);
-
-  if (item.k === "vessel") {
-    const { x, y, w, h } = item;
-    const lvl = item.level ? live.values[MODEL.byTag.get(item.level)?.index ?? -1] : undefined;
-    return (
-      <Hit tag={item.tag}>
-        <g>
-          {item.head === "hopper" ? (
-            <>
-              <rect x={x} y={y} width={w} height={h * 0.62} fill={PAPER} stroke={stroke} />
-              <polygon points={`${x},${y + h * 0.62} ${x + w},${y + h * 0.62} ${x + w * 0.72},${y + h} ${x + w * 0.28},${y + h}`} fill={PAPER} stroke={stroke} />
-            </>
-          ) : null}
-          {item.head === "cone" ? (
-            <>
-              <polygon points={`${x + w / 2},${y} ${x},${y + 28} ${x + w},${y + 28}`} fill={PAPER} stroke={stroke} />
-              <rect x={x} y={y + 28} width={w} height={h - 40} fill={PAPER} stroke={stroke} />
-              <ellipse cx={x + w / 2} cy={y + h - 12} rx={w / 2} ry="12" fill={PAPER} stroke={stroke} />
-            </>
-          ) : null}
-          {item.head === "open" || item.head === "dished" ? (
-            <>
-              {item.head === "dished" ? <ellipse cx={x + w / 2} cy={y + 12} rx={w / 2} ry="12" fill={PAPER} stroke={stroke} /> : <line x1={x} y1={y + 8} x2={x + w} y2={y + 8} stroke={stroke} />}
-              <rect x={x} y={y + 12} width={w} height={h - 24} fill={PAPER} stroke={stroke} />
-              <ellipse cx={x + w / 2} cy={y + h - 12} rx={w / 2} ry="12" fill={PAPER} stroke={stroke} />
-              {levelFill(w, h - 24, lvl, item.fluid) && (
-                <g transform={`translate(${x} ${y + 12})`}>{levelFill(w, h - 24, lvl, item.fluid)}</g>
-              )}
-            </>
-          ) : null}
-          {item.agitator ? (
-            <g>
-              <line x1={x + w / 2} y1={y + 4} x2={x + w / 2} y2={y + h - 28} stroke={stroke} />
-              <path d={`M ${x + w / 2 - 16} ${y + h - 36} L ${x + w / 2} ${y + h - 28} L ${x + w / 2 + 16} ${y + h - 36}`} fill="none" stroke={stroke} />
-              <Motor x={x + w / 2} y={y - 16} tag={item.drive} state={state} />
-            </g>
-          ) : null}
-          <Tag x={x + w / 2} y={y + h + 16} tag={item.tag} />
-        </g>
-      </Hit>
-    );
-  }
-
-  if (item.k === "pump") {
-    return (
-      <g>
-        <Hit tag={item.tag}>
-          <g transform={`translate(${item.x} ${item.y})`}>
-            <PumpGlyph dir={item.dir ?? "e"} stroke={stroke} />
-          </g>
-          <Tag x={item.x} y={item.y + 64} tag={item.tag} />
-        </Hit>
-        <Motor x={item.x} y={item.y + 40} tag={item.drive ?? item.tag} state={state} />
-      </g>
-    );
-  }
-
-  if (item.k === "valve") {
-    return (
-      <Hit tag={item.tag}>
-        <g transform={`translate(${item.x} ${item.y})`}>
-          <ValveGlyph form={item.form} act={item.act} />
-          <Tag x={0} y={22} tag={item.tag} />
-        </g>
-      </Hit>
-    );
-  }
-
-  if (item.k === "conveyor") {
-    const y = item.y;
-    return (
-      <g>
-        <Hit tag={item.tag}>
-          <g stroke={stroke} fill={PAPER}>
-            <line x1={item.x + 12} y1={y} x2={item.x + item.w - 12} y2={y} strokeWidth="1.4" />
-            <line x1={item.x + 12} y1={y + 16} x2={item.x + item.w - 12} y2={y + 16} strokeWidth="1.4" />
-            <circle cx={item.x + 12} cy={y + 8} r="8" />
-            <circle cx={item.x + item.w - 12} cy={y + 8} r="8" />
-          </g>
-          <Tag x={item.x + item.w / 2} y={y + 36} tag={item.tag} />
-        </Hit>
-        <Motor x={item.x + item.w - 12} y={y + 32} tag={item.drive ?? item.tag} state={state} />
-      </g>
-    );
-  }
-
-  if (item.k === "crusher") {
-    return (
-      <g>
-        <Hit tag={item.tag}>
-          <g stroke={stroke} fill={PAPER}>
-            <polygon points={`${item.x}, ${item.y} ${item.x + 78}, ${item.y} ${item.x + 64}, ${item.y + 86} ${item.x + 14}, ${item.y + 86}`} />
-            <polygon points={`${item.x + 39}, ${item.y + 10} ${item.x + 50}, ${item.y + 74} ${item.x + 28}, ${item.y + 74}`} />
-          </g>
-          <Tag x={item.x + 39} y={item.y + 104} tag={item.tag} />
-        </Hit>
-        <Motor x={item.x + 100} y={item.y + 40} tag={item.drive} state={state} />
-      </g>
-    );
-  }
-
-  if (item.k === "mill") {
-    const h = 58;
-    return (
-      <g>
-        <Hit tag={item.tag}>
-          <g stroke={stroke} fill={PAPER}>
-            <rect x={item.x + 18} y={item.y} width={item.w - 36} height={h} />
-            <ellipse cx={item.x + 18} cy={item.y + h / 2} rx="18" ry={h / 2} />
-            <ellipse cx={item.x + item.w - 18} cy={item.y + h / 2} rx="18" ry={h / 2} />
-          </g>
-          <Tag x={item.x + item.w / 2} y={item.y + h + 16} tag={item.tag} />
-        </Hit>
-        <Motor x={item.x + item.w - 18} y={item.y + h + 18} tag={item.drive} state={state} />
-      </g>
-    );
-  }
-
-  if (item.k === "cyclone") {
-    return (
-      <Hit tag={item.tag}>
-        <g stroke={INK} fill={PAPER}>
-          <rect x={item.x} y={item.y} width="46" height="18" />
-          <polygon points={`${item.x},${item.y + 18} ${item.x + 46},${item.y + 18} ${item.x + 30},${item.y + 78} ${item.x + 16},${item.y + 78}`} />
-          <line x1={item.x + 23} y1={item.y - 10} x2={item.x + 23} y2={item.y + 16} />
-          <Tag x={item.x + 23} y={item.y + 96} tag={item.tag} />
-        </g>
-      </Hit>
-    );
-  }
-
-  if (item.k === "cell") {
-    return (
-      <g>
-        <Hit tag={item.tag}>
-          <g stroke={stroke} fill={PAPER}>
-            <rect x={item.x} y={item.y} width="64" height="78" />
-            <rect x={item.x + 3} y={item.y + 4} width="58" height="10" fill="#d7e0ea" opacity="0.25" stroke="none" />
-            <line x1={item.x + 32} y1={item.y} x2={item.x + 32} y2={item.y + 62} />
-            <path d={`M ${item.x + 18} ${item.y + 58} L ${item.x + 32} ${item.y + 68} L ${item.x + 46} ${item.y + 58}`} fill="none" />
-          </g>
-          <Tag x={item.x + 32} y={item.y + 94} tag={item.tag} />
-        </Hit>
-        <Motor x={item.x + 32} y={item.y - 16} tag={item.drive} state={state} />
-      </g>
-    );
-  }
-
-  if (item.k === "column") {
-    return (
-      <Hit tag={item.tag}>
-        <g stroke={INK} fill={PAPER}>
-          <rect x={item.x} y={item.y} width="36" height="120" />
-          <line x1={item.x + 6} y1={item.y + 30} x2={item.x + 30} y2={item.y + 30} strokeDasharray="3 2" />
-          <line x1={item.x + 6} y1={item.y + 48} x2={item.x + 30} y2={item.y + 48} strokeDasharray="3 2" />
-          <line x1={item.x + 6} y1={item.y + 66} x2={item.x + 30} y2={item.y + 66} strokeDasharray="3 2" />
-          <Tag x={item.x + 18} y={item.y + 136} tag={item.tag} />
-        </g>
-      </Hit>
-    );
-  }
-
-  if (item.k === "thickener") {
-    return (
-      <g>
-        <Hit tag={item.tag}>
-          <g stroke={stroke} fill={PAPER}>
-            <circle cx={item.x} cy={item.y} r={item.r} />
-            <line x1={item.x - item.r + 8} y1={item.y} x2={item.x + item.r - 8} y2={item.y} />
-            <line x1={item.x} y1={item.y - item.r + 8} x2={item.x} y2={item.y + item.r - 8} />
-            <circle cx={item.x} cy={item.y} r="7" />
-          </g>
-        </Hit>
-        <Motor x={item.x + item.r + 20} y={item.y} tag={item.drive} state={state} />
-        <Tag x={item.x} y={item.y + item.r + 18} tag={item.tag} />
-      </g>
-    );
-  }
-
-  if (item.k === "filter") {
-    return (
-      <g>
-        <Hit tag={item.tag}>
-          <g stroke={stroke} fill={PAPER}>
-            <rect x={item.x} y={item.y} width="86" height="54" />
-            <line x1={item.x + 8} y1={item.y + 46} x2={item.x + 78} y2={item.y + 8} />
-            <line x1={item.x + 8} y1={item.y + 32} x2={item.x + 50} y2={item.y + 8} />
-            <line x1={item.x + 28} y1={item.y + 46} x2={item.x + 78} y2={item.y + 22} />
-          </g>
-        </Hit>
-        <Motor x={item.x + 43} y={item.y + 78} tag={item.drive} state={state} />
-        <Tag x={item.x + 43} y={item.y + 104} tag={item.tag} />
-      </g>
-    );
-  }
-
-  if (item.k === "fan" || item.k === "compressor") {
-    return (
-      <g>
-        <Hit tag={item.tag}>
-          <g transform={`translate(${item.x} ${item.y})`} stroke={stroke} fill={PAPER}>
-            <circle r="18" strokeWidth="1.4" />
-            <path d="M 0,-12 L 8,8 L -8,8 Z" />
-            {item.k === "compressor" ? <path d="M 6,-10 L 24,0 L 6,10 Z" /> : <path d="M -4,0 Q 8,-14 10,6" fill="none" />}
-          </g>
-        </Hit>
-        <Motor x={item.x} y={item.y + 40} tag={item.drive ?? item.tag} state={state} />
-        <Tag x={item.x} y={item.y + 64} tag={item.tag} />
-      </g>
-    );
-  }
-
-  if (item.k === "diesel") {
-    return (
-      <g>
-        <Hit tag={item.tag}>
-          <g stroke={stroke} fill={PAPER}>
-            <rect x={item.x} y={item.y} width="88" height="40" />
-            <polygon points={`${item.x + 88},${item.y + 8} ${item.x + 108},${item.y + 8} ${item.x + 108},${item.y + 20} ${item.x + 88},${item.y + 20}`} />
-            <text x={item.x + 44} y={item.y + 25} textAnchor="middle" fill={stroke} fontSize="12">D</text>
-          </g>
-        </Hit>
-        <Tag x={item.x + 44} y={item.y + 58} tag={item.tag} />
-      </g>
-    );
-  }
-
-  if (item.k === "magnet") {
-    return (
-      <Hit tag={item.tag}>
-        <g stroke={INK} fill="none">
-          <path d={`M ${item.x} ${item.y + 22} L ${item.x} ${item.y + 8} Q ${item.x + 18} ${item.y - 10} ${item.x + 36} ${item.y + 8} L ${item.x + 36} ${item.y + 22}`} strokeWidth="3" />
-          <Tag x={item.x + 18} y={item.y + 38} tag={item.tag} />
-        </g>
-      </Hit>
-    );
-  }
-
-  if (item.k === "detector") {
-    return (
-      <Hit tag={item.tag}>
-        <g>
-          <polygon points={`${item.x},${item.y} ${item.x + 16},${item.y + 14} ${item.x},${item.y + 28} ${item.x - 16},${item.y + 14}`} fill={PAPER} stroke={INK} />
-          <text x={item.x} y={item.y + 18} textAnchor="middle" fill={INK} fontSize="8">MD</text>
-          <Tag x={item.x} y={item.y + 44} tag={item.tag} />
-        </g>
-      </Hit>
-    );
-  }
-
-  return null;
-}
+const U = (unit: Unit): Unit => unit;
 
 export const SHEETS: Record<Exclude<AreaId, "sys">, Sheet> = {
   crush: {
     drawing: "PID-100-001",
-    note: "Primary crushing P&ID. Field bubbles are the transmitters. FC-102 is the DCS feeder controller. DC-101 starts tripped.",
-    items: [
-      { k: "line", d: "M 90 250 H 230", fluid: "slurry", run: "FE-101" },
-      { k: "line", d: "M 310 250 H 430", fluid: "slurry", run: "CR-101" },
-      { k: "line", d: "M 1180 244 H 1240", fluid: "slurry", run: "CV-102" },
-      { k: "signal", d: "M 36 120 H 70" },
-      { k: "signal", d: "M 250 360 H 400" },
-      { k: "signal", d: "M 980 180 V 230" },
-      { k: "vessel", x: 40, y: 70, w: 90, h: 160, tag: "BN-101", head: "hopper", fluid: "slurry", level: "LIT-101" },
-      { k: "bubble", x: 18, y: 120, tag: "LIT-101", loc: "field" },
-      { k: "conveyor", x: 36, y: 242, w: 120, tag: "FE-101", drive: "FE-101" },
-      { k: "crusher", x: 230, y: 150, tag: "CR-101", drive: "CR-101" },
-      { k: "bubble", x: 210, y: 400, tag: "ZT-114", loc: "field" },
-      { k: "bubble", x: 400, y: 150, tag: "VT-115", loc: "field" },
-      { k: "bubble", x: 430, y: 360, tag: "EI-CR-101", loc: "dcs" },
-      { k: "bubble", x: 560, y: 360, tag: "FC-102", loc: "dcs" },
-      { k: "pump", x: 150, y: 470, tag: "PU-111", drive: "PU-111" },
-      { k: "pump", x: 250, y: 470, tag: "PU-112", drive: "PU-112" },
-      { k: "bubble", x: 360, y: 470, tag: "PIT-111", loc: "field" },
-      { k: "text", x: 130, y: 560, text: "Crusher lube, duty / standby" },
-      { k: "fan", x: 280, y: 70, tag: "DC-101", drive: "DC-101" },
-      { k: "text", x: 250, y: 48, text: "Dust collector" },
-      { k: "conveyor", x: 430, y: 236, w: 760, tag: "CV-102", drive: "CV-102" },
-      { k: "magnet", x: 640, y: 180, tag: "MA-101" },
-      { k: "detector", x: 820, y: 186, tag: "MD-101" },
-      { k: "bubble", x: 980, y: 180, tag: "WIT-102", loc: "field" },
-      { k: "bubble", x: 820, y: 130, tag: "XA-MD-101", loc: "field" },
-      { k: "text", x: 430, y: 300, text: "Discharge to stockpile. Pull-wire and belt alignment trip CV-102." },
+    note: "ROM enters the bin, the apron feeder draws it through the gyratory, and the discharge conveyor leaves for the stockpile.",
+    units: [
+      U({ tag: "BN-101", x: 36, y: 150, w: 140, h: 110, title: "ROM bin", tone: "ore", read: "LIT-101" }),
+      U({ tag: "FE-101", x: 230, y: 175, w: 130, h: 64, title: "Apron feeder", tone: "slurry", drive: "FE-101" }),
+      U({ tag: "CR-101", x: 410, y: 140, w: 150, h: 130, title: "Gyratory", tone: "ore", drive: "CR-101", read: "EI-CR-101" }),
+      U({ tag: "CV-102", x: 720, y: 172, w: 320, h: 70, title: "Discharge conveyor", tone: "slurry", drive: "CV-102", read: "WIT-102" }),
+      U({ tag: "DC-101", x: 425, y: 36, w: 130, h: 58, title: "Dust collector", tone: "air", drive: "DC-101" }),
+      U({ tag: "MA-101", x: 700, y: 78, w: 110, h: 52, title: "Magnet", tone: "power", drive: "MA-101" }),
+      U({ tag: "MD-101", x: 860, y: 78, w: 130, h: 52, title: "Metal detector", tone: "power" }),
+      U({ tag: "PU-111", x: 410, y: 360, w: 110, h: 56, title: "Lube pump A", tone: "water", drive: "PU-111" }),
+      U({ tag: "PU-112", x: 540, y: 360, w: 110, h: 56, title: "Lube pump B", tone: "water", drive: "PU-112" }),
+    ],
+    pipes: [
+      { d: "M 176 205 H 230", label: "ROM", lx: 184, ly: 196 },
+      { d: "M 360 205 H 410" },
+      { d: "M 560 205 H 720", label: "Crushed ore", lx: 590, ly: 196 },
+      { d: "M 1040 207 H 1140", label: "To stockpile", lx: 1048, ly: 196, run: "CV-102" },
+      { d: "M 490 94 V 140", label: "Dust", lx: 498, ly: 124, kind: "air", run: "DC-101" },
+      { d: "M 755 130 V 172", run: "CV-102" },
+      { d: "M 925 130 V 172", run: "CV-102" },
+      { d: "M 485 270 V 330", label: "Lube oil", lx: 492, ly: 312 },
+      { d: "M 465 330 H 595" },
+      { d: "M 465 330 V 360" },
+      { d: "M 595 330 V 360" },
     ],
   },
   stock: {
     drawing: "PID-200-001",
-    note: "Coarse-ore stockpile P&ID. Feeders A and C draw. Feeder B is standby. The tramp-metal diamond on CV-202 stays latched until it is reset.",
-    items: [
-      { k: "line", d: "M 20 120 H 160", fluid: "slurry", run: "CV-102" },
-      { k: "line", d: "M 200 300 H 700", fluid: "slurry", run: "CV-201" },
-      { k: "line", d: "M 760 300 H 1200", fluid: "slurry", run: "CV-202" },
-      { k: "vessel", x: 160, y: 70, w: 280, h: 150, tag: "ST-201", head: "open", fluid: "slurry", level: "LIT-201" },
-      { k: "bubble", x: 470, y: 110, tag: "LIT-201", loc: "field" },
-      { k: "text", x: 180, y: 60, text: "Open stockpile, 18,000 t live pocket" },
-      { k: "conveyor", x: 190, y: 250, w: 80, tag: "FE-201A", drive: "FE-201A" },
-      { k: "conveyor", x: 290, y: 250, w: 80, tag: "FE-201B", drive: "FE-201B" },
-      { k: "conveyor", x: 390, y: 250, w: 80, tag: "FE-201C", drive: "FE-201C" },
-      { k: "conveyor", x: 180, y: 360, w: 460, tag: "CV-201", drive: "CV-201" },
-      { k: "conveyor", x: 700, y: 360, w: 460, tag: "CV-202", drive: "CV-202" },
-      { k: "detector", x: 1040, y: 300, tag: "MD-201" },
-      { k: "bubble", x: 1040, y: 250, tag: "XA-MD-201", loc: "field" },
-      { k: "bubble", x: 980, y: 470, tag: "WIT-202", loc: "field" },
-      { k: "bubble", x: 820, y: 470, tag: "FC-202", loc: "dcs" },
-      { k: "text", x: 180, y: 470, text: "Reclaim A and C running. B is the standby feeder. FC-202 trims the SAG feed." },
+    note: "Crushed ore lands on the live pile. Feeders A and C reclaim onto the collection conveyor, then the SAG-feed conveyor.",
+    units: [
+      U({ tag: "ST-201", x: 150, y: 48, w: 340, h: 100, title: "Coarse ore stockpile", tone: "ore", read: "LIT-201" }),
+      U({ tag: "FE-201A", x: 170, y: 210, w: 90, h: 56, title: "Feeder A", tone: "slurry", drive: "FE-201A" }),
+      U({ tag: "FE-201B", x: 275, y: 210, w: 90, h: 56, title: "Feeder B", tone: "slurry", drive: "FE-201B" }),
+      U({ tag: "FE-201C", x: 380, y: 210, w: 90, h: 56, title: "Feeder C", tone: "slurry", drive: "FE-201C" }),
+      U({ tag: "CV-201", x: 150, y: 340, w: 340, h: 60, title: "Collection conveyor", tone: "slurry", drive: "CV-201" }),
+      U({ tag: "CV-202", x: 560, y: 340, w: 420, h: 60, title: "SAG feed conveyor", tone: "slurry", drive: "CV-202", read: "WIT-202" }),
+      U({ tag: "MD-201", x: 760, y: 230, w: 140, h: 56, title: "Metal detector", tone: "power" }),
+    ],
+    pipes: [
+      { d: "M 24 98 H 150", label: "From crushing", lx: 28, ly: 88 },
+      { d: "M 215 148 V 210" },
+      { d: "M 320 148 V 210" },
+      { d: "M 425 148 V 210" },
+      { d: "M 215 266 V 340" },
+      { d: "M 320 266 V 340" },
+      { d: "M 425 266 V 340" },
+      { d: "M 490 370 H 560", label: "Reclaim", lx: 498, ly: 360, run: "CV-201" },
+      { d: "M 830 286 V 340" },
+      { d: "M 980 370 H 1140", label: "To SAG mill", lx: 992, ly: 360, run: "CV-202" },
     ],
   },
   sag: {
     drawing: "PID-300-001",
-    note: "SAG circuit P&ID. LC-301 is the sump controller in the DCS. DC-323 moves the dilution valve. Both pinions share one start command.",
-    items: [
-      { k: "line", d: "M 20 160 H 70", fluid: "slurry", run: "CV-202" },
-      { k: "line", d: "M 400 160 H 470", fluid: "slurry", run: "ML-301A" },
-      { k: "line", d: "M 560 150 H 690", fluid: "slurry", run: "PU-321A" },
-      { k: "line", d: "M 760 80 H 900", fluid: "water", run: "PU-951A", branch: true },
-      { k: "line", d: "M 70 430 H 300", fluid: "slurry", run: "CV-331" },
-      { k: "signal", d: "M 500 340 H 700" },
-      { k: "signal", d: "M 860 200 H 980" },
-      { k: "mill", x: 70, y: 120, w: 330, tag: "ML-301", drive: "ML-301A" },
-      { k: "text", x: 70, y: 110, text: "36 ft × 20 ft · twin pinion · ML-301B paired" },
-      { k: "bubble", x: 110, y: 310, tag: "EI-ML-301A", loc: "dcs" },
-      { k: "bubble", x: 250, y: 310, tag: "EI-ML-301B", loc: "dcs" },
-      { k: "bubble", x: 390, y: 310, tag: "TIT-311A", loc: "field" },
-      { k: "vessel", x: 470, y: 90, w: 70, h: 120, tag: "SU-301", head: "open", fluid: "slurry", level: "LIT-301" },
-      { k: "bubble", x: 500, y: 340, tag: "LIT-301", loc: "field" },
-      { k: "bubble", x: 700, y: 340, tag: "LC-301", loc: "dcs" },
-      { k: "pump", x: 620, y: 120, tag: "PU-321A", drive: "PU-321A" },
-      { k: "pump", x: 620, y: 250, tag: "PU-321B", drive: "PU-321B" },
-      { k: "text", x: 660, y: 250, text: "Standby" },
-      { k: "cyclone", x: 700, y: 70, tag: "CY-301" },
-      { k: "bubble", x: 790, y: 70, tag: "DIT-323", loc: "field" },
-      { k: "bubble", x: 790, y: 130, tag: "PIT-322", loc: "field" },
-      { k: "bubble", x: 980, y: 70, tag: "FIT-321", loc: "field" },
-      { k: "bubble", x: 980, y: 140, tag: "DC-323", loc: "dcs" },
-      { k: "valve", x: 860, y: 200, tag: "FV-301", form: "control", act: "air" },
-      { k: "text", x: 820, y: 240, text: "Dilution water, fail closed" },
-      { k: "conveyor", x: 40, y: 470, w: 280, tag: "CV-331", drive: "CV-331" },
-      { k: "crusher", x: 380, y: 430, tag: "CR-341", drive: "CR-341" },
-      { k: "text", x: 380, y: 420, text: "Pebble crusher" },
-      { k: "pump", x: 620, y: 500, tag: "PU-311A", drive: "PU-311A" },
-      { k: "bubble", x: 760, y: 500, tag: "PIT-311", loc: "field" },
-      { k: "text", x: 600, y: 590, text: "SAG lube. Below 140 kPa for 3 s trips both pinions." },
+    note: "SAG discharge drops into the sump. The lead cyclone pump feeds the cluster. Underflow is crushed and returned. Overflow leaves for the ball mill.",
+    units: [
+      U({ tag: "ML-301", x: 36, y: 70, w: 280, h: 90, title: "SAG mill", tone: "ore", drive: "ML-301A", read: "EI-ML-301A" }),
+      U({ tag: "SU-301", x: 380, y: 60, w: 110, h: 110, title: "Mill sump", tone: "slurry", read: "LIT-301" }),
+      U({ tag: "PU-321A", x: 550, y: 48, w: 130, h: 52, title: "Cyclone pump A", tone: "slurry", drive: "PU-321A" }),
+      U({ tag: "PU-321B", x: 550, y: 118, w: 130, h: 52, title: "Cyclone pump B", tone: "slurry", drive: "PU-321B" }),
+      U({ tag: "CY-301", x: 760, y: 55, w: 140, h: 100, title: "Cyclone cluster", tone: "slurry", read: "DIT-323" }),
+      U({ tag: "CV-331", x: 36, y: 340, w: 280, h: 56, title: "Pebble conveyor", tone: "slurry", drive: "CV-331" }),
+      U({ tag: "CR-341", x: 380, y: 328, w: 150, h: 80, title: "Pebble crusher", tone: "ore", drive: "CR-341" }),
+      U({ tag: "FV-301", x: 380, y: 230, w: 110, h: 48, title: "Dilution", tone: "water" }),
+      U({ tag: "PU-311A", x: 36, y: 470, w: 140, h: 52, title: "SAG lube", tone: "water", drive: "PU-311A", read: "PIT-311" }),
+    ],
+    pipes: [
+      { d: "M 8 115 H 36", label: "From stockpile", lx: 44, ly: 62 },
+      { d: "M 316 115 H 380", label: "Discharge", lx: 320, ly: 106, run: "ML-301A" },
+      { d: "M 490 86 H 550", run: "PU-321A" },
+      { d: "M 490 144 H 550" },
+      { d: "M 680 74 H 720", label: "Cyclone feed", lx: 688, ly: 66, run: "PU-321A" },
+      { d: "M 680 144 H 720" },
+      { d: "M 720 74 V 144" },
+      { d: "M 720 105 H 760" },
+      { d: "M 900 90 H 1140", label: "Overflow to ball mill", lx: 910, ly: 80, run: "PU-321A" },
+      { d: "M 830 155 V 300 H 455 V 328", label: "Underflow", lx: 760, ly: 250, kind: "recycle" },
+      { d: "M 316 368 H 380", label: "Pebbles", lx: 318, ly: 358, run: "CV-331" },
+      { d: "M 455 408 V 590 H 8 V 36 H 176 V 70", label: "Pebble return", lx: 200, ly: 28, kind: "recycle", run: "CR-341" },
+      { d: "M 1100 254 H 490", label: "Process water", lx: 860, ly: 246, kind: "water" },
+      { d: "M 435 230 V 170", kind: "water" },
+      { d: "M 106 160 V 320 H 22 V 496 H 36", label: "Lube", lx: 36, ly: 448, kind: "water", run: "PU-311A" },
     ],
   },
   ball: {
     drawing: "PID-400-001",
-    note: "Ball-mill P&ID. LC-401 holds the sump. Cyclone overflow is the rougher feed, with P80 on AIT-401.",
-    items: [
-      { k: "line", d: "M 20 180 H 80", fluid: "slurry", run: "PU-321A" },
-      { k: "line", d: "M 430 180 H 520", fluid: "slurry", run: "ML-401A" },
-      { k: "line", d: "M 620 160 H 760", fluid: "slurry", run: "PU-421A" },
-      { k: "line", d: "M 860 120 H 1000", fluid: "water", run: "PU-951A", branch: true },
-      { k: "mill", x: 80, y: 140, w: 340, tag: "ML-401", drive: "ML-401A" },
-      { k: "text", x: 80, y: 130, text: "22 ft × 36 ft · ML-401B paired" },
-      { k: "bubble", x: 100, y: 280, tag: "EI-ML-401A", loc: "dcs" },
-      { k: "bubble", x: 280, y: 280, tag: "EI-ML-401B", loc: "dcs" },
-      { k: "vessel", x: 500, y: 120, w: 70, h: 110, tag: "SU-401", head: "open", fluid: "slurry", level: "LIT-401" },
-      { k: "bubble", x: 530, y: 270, tag: "LIT-401", loc: "field" },
-      { k: "bubble", x: 680, y: 300, tag: "LC-401", loc: "dcs" },
-      { k: "pump", x: 660, y: 140, tag: "PU-421A", drive: "PU-421A" },
-      { k: "pump", x: 660, y: 250, tag: "PU-421B", drive: "PU-421B" },
-      { k: "cyclone", x: 780, y: 80, tag: "CY-401" },
-      { k: "bubble", x: 880, y: 70, tag: "DIT-423", loc: "field" },
-      { k: "bubble", x: 1080, y: 70, tag: "AIT-401-P80", loc: "field" },
-      { k: "bubble", x: 880, y: 140, tag: "FIT-421", loc: "field" },
-      { k: "bubble", x: 1080, y: 140, tag: "PIT-422", loc: "field" },
-      { k: "bubble", x: 980, y: 220, tag: "DC-423", loc: "dcs" },
-      { k: "valve", x: 960, y: 280, tag: "FV-401", form: "control", act: "air" },
-      { k: "text", x: 900, y: 320, text: "Dilution, fail closed" },
-      { k: "pump", x: 160, y: 460, tag: "PU-411A", drive: "PU-411A" },
-      { k: "bubble", x: 300, y: 460, tag: "PIT-411", loc: "field" },
-      { k: "text", x: 140, y: 560, text: "Ball-mill lube. Header under 140 kPa trips both pinions after 3 s." },
-      { k: "text", x: 780, y: 400, text: "Overflow to rougher conditioner" },
+    note: "Ball-mill discharge is pumped to the cyclones. Overflow, sized near 150 µm, is the rougher feed. Underflow returns to the mill.",
+    units: [
+      U({ tag: "ML-401", x: 36, y: 90, w: 280, h: 90, title: "Ball mill", tone: "ore", drive: "ML-401A", read: "EI-ML-401A" }),
+      U({ tag: "SU-401", x: 380, y: 80, w: 110, h: 110, title: "Mill sump", tone: "slurry", read: "LIT-401" }),
+      U({ tag: "PU-421A", x: 550, y: 70, w: 140, h: 52, title: "Cyclone pump A", tone: "slurry", drive: "PU-421A" }),
+      U({ tag: "PU-421B", x: 550, y: 140, w: 140, h: 52, title: "Cyclone pump B", tone: "slurry", drive: "PU-421B" }),
+      U({ tag: "CY-401", x: 770, y: 70, w: 150, h: 100, title: "Cyclone cluster", tone: "slurry", read: "AIT-401-P80" }),
+      U({ tag: "FV-401", x: 380, y: 250, w: 110, h: 48, title: "Dilution", tone: "water" }),
+      U({ tag: "PU-411A", x: 36, y: 280, w: 150, h: 56, title: "Ball mill lube", tone: "water", drive: "PU-411A", read: "PIT-411" }),
+    ],
+    pipes: [
+      { d: "M 8 135 H 36", label: "SAG overflow", lx: 44, ly: 82 },
+      { d: "M 316 135 H 380", label: "Discharge", lx: 318, ly: 126, run: "ML-401A" },
+      { d: "M 490 106 H 550", run: "PU-421A" },
+      { d: "M 490 166 H 550" },
+      { d: "M 690 96 H 730", label: "Cyclone feed", lx: 696, ly: 88, run: "PU-421A" },
+      { d: "M 690 166 H 730" },
+      { d: "M 730 96 V 166" },
+      { d: "M 730 120 H 770" },
+      { d: "M 920 100 H 1140", label: "Overflow to rougher", lx: 928, ly: 90, run: "PU-421A" },
+      { d: "M 845 170 V 420 H 16 V 135 H 36", label: "Underflow return", lx: 360, ly: 408, kind: "recycle" },
+      { d: "M 1040 274 H 490", label: "Process water", lx: 820, ly: 266, kind: "water" },
+      { d: "M 435 250 V 190", kind: "water" },
+      { d: "M 176 180 V 280", label: "Lube", lx: 184, ly: 230, kind: "water", run: "PU-411A" },
     ],
   },
   rough: {
     drawing: "PID-500-001",
-    note: "Rougher P&ID. Cell 1 is drawn with its level and air loops. Cells 2 to 8 repeat that loop. AC-520 is the conditioner pH controller.",
-    items: [
-      { k: "line", d: "M 40 180 H 150", fluid: "slurry", run: "PU-501" },
-      { k: "line", d: "M 230 180 H 1180", fluid: "slurry", run: "AG-501" },
-      { k: "line", d: "M 40 40 H 1180", fluid: "air", run: "BL-501A", branch: true },
-      { k: "vessel", x: 30, y: 80, w: 70, h: 130, tag: "TK-501", head: "open", fluid: "slurry", level: "LIT-520", agitator: true, drive: "AG-520" },
-      { k: "bubble", x: 20, y: 250, tag: "LIT-520", loc: "field" },
-      { k: "bubble", x: 160, y: 250, tag: "AIT-520", loc: "field" },
-      { k: "bubble", x: 300, y: 250, tag: "AC-520", loc: "dcs" },
-      { k: "pump", x: 150, y: 140, tag: "PU-501", drive: "PU-501" },
-      ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
-        k: "cell" as const,
-        x: 250 + i * 120,
-        y: 90,
-        tag: `FC-${501 + i}`,
-        drive: `AG-${501 + i}`,
+    note: "Conditioned slurry feeds eight rougher cells in series. Concentrate leaves along the top launder. Tails leave along the bottom to the thickener.",
+    units: [
+      U({ tag: "TK-501", x: 24, y: 165, w: 120, h: 120, title: "Conditioner", tone: "slurry", drive: "AG-520", read: "AIT-520" }),
+      U({ tag: "PU-501", x: 180, y: 195, w: 100, h: 60, title: "Feed pump", tone: "slurry", drive: "PU-501" }),
+      ...[1, 2, 3, 4, 5, 6, 7, 8].map((i) => U({
+        tag: `FC-${500 + i}`,
+        x: 300 + (i - 1) * 104,
+        y: 170,
+        w: 86,
+        h: 110,
+        title: `Cell ${i}`,
+        tone: "slurry",
+        drive: `AG-${500 + i}`,
+        read: i === 1 ? "LIT-501" : undefined,
       })),
-      { k: "bubble", x: 300, y: 300, tag: "LIT-501", loc: "field" },
-      { k: "bubble", x: 430, y: 300, tag: "LC-501", loc: "dcs" },
-      { k: "valve", x: 282, y: 230, tag: "LV-501", form: "control", act: "air" },
-      { k: "bubble", x: 560, y: 40, tag: "FIT-501", loc: "field" },
-      { k: "valve", x: 700, y: 40, tag: "FV-501", form: "control", act: "air" },
-      { k: "text", x: 760, y: 230, text: "Cells 2–8: same LIT / LC / LV / FIT / FV" },
-      { k: "fan", x: 80, y: 400, tag: "BL-501A", drive: "BL-501A" },
-      { k: "fan", x: 200, y: 400, tag: "BL-501B", drive: "BL-501B" },
-      { k: "bubble", x: 340, y: 400, tag: "PIT-510", loc: "field" },
-      { k: "text", x: 40, y: 500, text: "Duty blower A, standby B" },
-      { k: "bubble", x: 700, y: 400, tag: "AIT-510-CU", loc: "computer" },
-      { k: "bubble", x: 860, y: 400, tag: "AIT-511-CU", loc: "computer" },
-      { k: "bubble", x: 1020, y: 400, tag: "AIT-512-CU", loc: "computer" },
-      { k: "text", x: 700, y: 460, text: "Courier 6i · feed, concentrate, tails. Iron channel is uncertain." },
+      U({ tag: "BL-501A", x: 24, y: 430, w: 120, h: 56, title: "Blower A", tone: "air", drive: "BL-501A", read: "PIT-510" }),
+      U({ tag: "BL-501B", x: 160, y: 430, w: 120, h: 56, title: "Blower B", tone: "air", drive: "BL-501B" }),
+    ],
+    pipes: [
+      { d: "M 144 225 H 180", run: "PU-501" },
+      { d: "M 280 225 H 300", label: "Rougher feed", lx: 188, ly: 156, run: "PU-501" },
+      { d: "M 8 225 H 24", label: "Ball mill overflow", lx: 28, ly: 156 },
+      { d: "M 386 225 H 404" },
+      { d: "M 490 225 H 508" },
+      { d: "M 594 225 H 612" },
+      { d: "M 698 225 H 716" },
+      { d: "M 802 225 H 820" },
+      { d: "M 906 225 H 924" },
+      { d: "M 1010 225 H 1028" },
+      { d: "M 343 170 V 152 H 1140", label: "Concentrate to cleaner", lx: 620, ly: 144, run: "AG-501" },
+      { d: "M 447 170 V 152" },
+      { d: "M 551 170 V 152" },
+      { d: "M 655 170 V 152" },
+      { d: "M 759 170 V 152" },
+      { d: "M 863 170 V 152" },
+      { d: "M 967 170 V 152" },
+      { d: "M 1071 170 V 152" },
+      { d: "M 343 280 V 340 H 1140", label: "Tails to thickener", lx: 28, ly: 356, run: "AG-501" },
+      { d: "M 447 280 V 340" },
+      { d: "M 551 280 V 340" },
+      { d: "M 655 280 V 340" },
+      { d: "M 759 280 V 340" },
+      { d: "M 863 280 V 340" },
+      { d: "M 967 280 V 340" },
+      { d: "M 1071 280 V 340" },
+      { d: "M 84 430 V 400 H 12", kind: "air", run: "BL-501A" },
+      { d: "M 220 430 V 400", kind: "air" },
+      { d: "M 12 400 V 124 H 1141", label: "Flotation air", lx: 400, ly: 116, kind: "air", run: "BL-501A" },
     ],
   },
   clean: {
     drawing: "PID-600-001",
-    note: "Cleaner P&ID. Regrind mill, four cleaners, two packed columns and four scavengers. Cleaner tails return upstream.",
-    items: [
-      { k: "line", d: "M 30 160 H 1180", fluid: "conc", run: "ML-601" },
-      { k: "line", d: "M 30 430 H 900", fluid: "slurry", run: "PU-631" },
-      { k: "mill", x: 30, y: 80, w: 180, tag: "ML-601", drive: "ML-601" },
-      { k: "bubble", x: 40, y: 230, tag: "AIT-601-P80", loc: "field" },
-      { k: "bubble", x: 180, y: 230, tag: "EI-ML-601", loc: "dcs" },
-      { k: "pump", x: 250, y: 110, tag: "PU-601", drive: "PU-601" },
-      ...[1, 2, 3, 4].map((i) => ({
-        k: "cell" as const,
-        x: 300 + (i - 1) * 100,
-        y: 80,
+    note: "Regrind feeds four cleaners and two columns. Scavenger tails are pumped back upstream. Final concentrate leaves for the thickener.",
+    units: [
+      U({ tag: "ML-601", x: 24, y: 70, w: 150, h: 80, title: "Regrind mill", tone: "ore", drive: "ML-601", read: "EI-ML-601" }),
+      U({ tag: "PU-601", x: 200, y: 84, w: 90, h: 52, title: "Feed pump", tone: "slurry", drive: "PU-601" }),
+      ...[1, 2, 3, 4].map((i) => U({
         tag: `FC-60${i}`,
+        x: 320 + (i - 1) * 110,
+        y: 60,
+        w: 100,
+        h: 96,
+        title: `Cleaner ${i}`,
+        tone: "conc",
         drive: `AG-60${i}`,
       })),
-      { k: "bubble", x: 332, y: 220, tag: "LIT-601", loc: "field" },
-      { k: "text", x: 430, y: 230, text: "Cleaner 1 shown. Cells 2–4 repeat." },
-      { k: "column", x: 740, y: 50, tag: "COL-611" },
-      { k: "column", x: 830, y: 50, tag: "COL-612" },
-      { k: "bubble", x: 758, y: 220, tag: "LIT-611", loc: "field" },
-      ...[1, 2, 3, 4].map((i) => ({
-        k: "cell" as const,
-        x: 40 + (i - 1) * 110,
-        y: 340,
+      U({ tag: "COL-611", x: 770, y: 48, w: 80, h: 120, title: "Column 1", tone: "conc", read: "LIT-611" }),
+      U({ tag: "COL-612", x: 870, y: 48, w: 80, h: 120, title: "Column 2", tone: "conc" }),
+      ...[1, 2, 3, 4].map((i) => U({
         tag: `FC-62${i}`,
+        x: 24 + (i - 1) * 120,
+        y: 340,
+        w: 108,
+        h: 80,
+        title: `Scavenger ${i}`,
+        tone: "slurry",
         drive: `AG-62${i}`,
       })),
-      { k: "text", x: 40, y: 470, text: "Scavenger bank. Cell 1 instruments are typical of 2–4." },
-      { k: "pump", x: 560, y: 380, tag: "PU-631", drive: "PU-631" },
-      { k: "text", x: 620, y: 400, text: "Scavenger tails return" },
-      { k: "bubble", x: 980, y: 80, tag: "AIT-610-CU", loc: "computer" },
-      { k: "text", x: 960, y: 130, text: "Final cleaner grade" },
+      U({ tag: "PU-631", x: 520, y: 352, w: 120, h: 56, title: "Return pump", tone: "slurry", drive: "PU-631" }),
+    ],
+    pipes: [
+      { d: "M 8 110 H 24", label: "Rougher concentrate", lx: 28, ly: 62 },
+      { d: "M 174 110 H 200", run: "ML-601" },
+      { d: "M 290 110 H 320", run: "PU-601" },
+      { d: "M 420 108 H 430" },
+      { d: "M 530 108 H 540" },
+      { d: "M 640 108 H 650" },
+      { d: "M 750 108 H 770", label: "Cleaner conc", lx: 752, ly: 40 },
+      { d: "M 850 108 H 870" },
+      { d: "M 950 108 H 1140", label: "To concentrate thickener", lx: 960, ly: 98 },
+      { d: "M 370 156 V 300 H 318 V 340", label: "Cleaner tails", lx: 378, ly: 292 },
+      { d: "M 132 380 H 144" },
+      { d: "M 252 380 H 264" },
+      { d: "M 372 380 H 384" },
+      { d: "M 492 380 H 520", run: "PU-631" },
+      { d: "M 640 380 H 980 V 250 H 12 V 110 H 24", label: "Scavenger return", lx: 700, ly: 242, kind: "recycle", run: "PU-631" },
     ],
   },
   conc: {
     drawing: "PID-700-001",
-    note: "Concentrate handling P&ID. Thickener is shown in plan with the rake. Underflow pumps feed the disc filter.",
-    items: [
-      { k: "line", d: "M 250 180 H 430", fluid: "conc", run: "PU-701A" },
-      { k: "line", d: "M 620 180 H 820", fluid: "conc", run: "FL-701" },
-      { k: "thickener", x: 140, y: 160, r: 70, tag: "TH-701", drive: "TH-701" },
-      { k: "bubble", x: 40, y: 280, tag: "LIT-701", loc: "field" },
-      { k: "bubble", x: 180, y: 280, tag: "DIT-701", loc: "field" },
-      { k: "bubble", x: 40, y: 350, tag: "JT-701", loc: "dcs" },
-      { k: "text", x: 40, y: 80, text: "25 m thickener, plan view" },
-      { k: "pump", x: 340, y: 140, tag: "PU-701A", drive: "PU-701A" },
-      { k: "pump", x: 340, y: 250, tag: "PU-701B", drive: "PU-701B" },
-      { k: "text", x: 390, y: 270, text: "Standby" },
-      { k: "filter", x: 460, y: 140, tag: "FL-701", drive: "FL-701" },
-      { k: "bubble", x: 620, y: 140, tag: "AIT-702", loc: "field" },
-      { k: "text", x: 460, y: 130, text: "Ceramic disc filter" },
-      { k: "conveyor", x: 760, y: 170, w: 220, tag: "CV-701", drive: "CV-701" },
-      { k: "vessel", x: 1040, y: 110, w: 120, h: 100, tag: "BN-701", head: "cone", fluid: "conc" },
-      { k: "bubble", x: 1100, y: 280, tag: "AIT-710", loc: "computer" },
-      { k: "bubble", x: 960, y: 280, tag: "WIT-703", loc: "field" },
-      { k: "text", x: 1040, y: 90, text: "Covered pad" },
+    note: "Cleaner concentrate is thickened, filtered, and stacked on the covered pad.",
+    units: [
+      U({ tag: "TH-701", x: 36, y: 160, w: 170, h: 130, title: "Concentrate thickener", tone: "conc", drive: "TH-701", read: "LIT-701" }),
+      U({ tag: "PU-701A", x: 270, y: 150, w: 130, h: 56, title: "Underflow pump A", tone: "conc", drive: "PU-701A" }),
+      U({ tag: "PU-701B", x: 270, y: 230, w: 130, h: 56, title: "Underflow pump B", tone: "conc", drive: "PU-701B" }),
+      U({ tag: "FL-701", x: 480, y: 175, w: 160, h: 90, title: "Disc filter", tone: "conc", drive: "FL-701", read: "AIT-702" }),
+      U({ tag: "CV-701", x: 760, y: 188, w: 150, h: 64, title: "Cake conveyor", tone: "conc", drive: "CV-701" }),
+      U({ tag: "BN-701", x: 960, y: 160, w: 170, h: 120, title: "Concentrate pad", tone: "conc", read: "AIT-710" }),
+    ],
+    pipes: [
+      { d: "M 8 225 H 36", label: "From columns", lx: 40, ly: 150 },
+      { d: "M 206 178 H 270", label: "Underflow", lx: 210, ly: 168, run: "PU-701A" },
+      { d: "M 206 258 H 270" },
+      { d: "M 400 178 H 440", run: "PU-701A" },
+      { d: "M 400 258 H 440" },
+      { d: "M 440 178 V 258" },
+      { d: "M 440 220 H 480" },
+      { d: "M 640 220 H 760", label: "Filter cake", lx: 656, ly: 210, run: "FL-701" },
+      { d: "M 910 220 H 960", label: "To pad", lx: 916, ly: 210, run: "CV-701" },
     ],
   },
   tails: {
     drawing: "PID-800-001",
-    note: "Tailings P&ID. Two thickener-underflow pumps run to the TSF. Pump C is standby. Return water is a separate tank and pump pair.",
-    items: [
-      { k: "line", d: "M 250 170 H 620", fluid: "tails", run: "PU-801A" },
-      { k: "line", d: "M 860 200 H 1100", fluid: "water", run: "PU-851A" },
-      { k: "thickener", x: 130, y: 160, r: 78, tag: "TH-801", drive: "TH-801" },
-      { k: "text", x: 30, y: 60, text: "65 m tailings thickener, plan" },
-      { k: "bubble", x: 30, y: 290, tag: "LIT-801", loc: "field" },
-      { k: "bubble", x: 180, y: 290, tag: "DIT-801", loc: "field" },
-      { k: "bubble", x: 30, y: 360, tag: "JT-801", loc: "dcs" },
-      { k: "bubble", x: 180, y: 360, tag: "AIT-801-CU", loc: "computer" },
-      { k: "pump", x: 340, y: 140, tag: "PU-801A", drive: "PU-801A" },
-      { k: "pump", x: 450, y: 140, tag: "PU-801B", drive: "PU-801B" },
-      { k: "pump", x: 560, y: 140, tag: "PU-801C", drive: "PU-801C" },
-      { k: "text", x: 520, y: 230, text: "C standby" },
-      { k: "bubble", x: 360, y: 280, tag: "FIT-801", loc: "field" },
-      { k: "bubble", x: 520, y: 280, tag: "PIT-802", loc: "field" },
-      { k: "text", x: 340, y: 360, text: "TSF discharge line" },
-      { k: "vessel", x: 760, y: 90, w: 70, h: 140, tag: "TK-851", head: "dished", fluid: "water", level: "LIT-851" },
-      { k: "bubble", x: 860, y: 120, tag: "LIT-851", loc: "field" },
-      { k: "pump", x: 980, y: 140, tag: "PU-851A", drive: "PU-851A" },
-      { k: "pump", x: 1100, y: 140, tag: "PU-851B", drive: "PU-851B" },
-      { k: "text", x: 760, y: 70, text: "Return-water tank" },
+    note: "Rougher tails are thickened and pumped to the TSF. Return water is collected and sent back to the plant.",
+    units: [
+      U({ tag: "TH-801", x: 36, y: 80, w: 180, h: 140, title: "Tailings thickener", tone: "tails", drive: "TH-801", read: "LIT-801" }),
+      U({ tag: "PU-801A", x: 280, y: 78, w: 130, h: 48, title: "TSF pump A", tone: "tails", drive: "PU-801A" }),
+      U({ tag: "PU-801B", x: 280, y: 136, w: 130, h: 48, title: "TSF pump B", tone: "tails", drive: "PU-801B" }),
+      U({ tag: "PU-801C", x: 280, y: 194, w: 130, h: 48, title: "TSF pump C", tone: "tails", drive: "PU-801C" }),
+      U({ tag: "TK-851", x: 720, y: 360, w: 150, h: 120, title: "Return water", tone: "water", read: "LIT-851" }),
+      U({ tag: "PU-851A", x: 920, y: 360, w: 120, h: 52, title: "Return pump A", tone: "water", drive: "PU-851A" }),
+      U({ tag: "PU-851B", x: 920, y: 428, w: 120, h: 52, title: "Return pump B", tone: "water", drive: "PU-851B" }),
+    ],
+    pipes: [
+      { d: "M 8 150 H 36", label: "Rougher tails", lx: 40, ly: 70 },
+      { d: "M 216 102 H 280", run: "PU-801A" },
+      { d: "M 216 160 H 280", run: "PU-801B" },
+      { d: "M 216 218 H 280" },
+      { d: "M 410 102 H 460", run: "PU-801A" },
+      { d: "M 410 160 H 460" },
+      { d: "M 410 218 H 460" },
+      { d: "M 460 102 V 218" },
+      { d: "M 460 150 H 1140", label: "To TSF", lx: 980, ly: 140, run: "PU-801A" },
+      { d: "M 126 220 V 420 H 720", label: "Decant", lx: 300, ly: 408, kind: "water" },
+      { d: "M 870 386 H 920", kind: "water", run: "PU-851A" },
+      { d: "M 870 454 H 920", kind: "water" },
+      { d: "M 1040 386 H 1140", label: "To process water", lx: 1044, ly: 376, kind: "water", run: "PU-851A" },
+      { d: "M 1040 454 H 1080 V 386", kind: "water" },
     ],
   },
   reag: {
     drawing: "PID-900-001",
-    note: "Reagent P&ID. Lime, collector, frother and depressant. Lime pump A is the output of the conditioner pH loop AC-520.",
-    items: [
-      { k: "line", d: "M 80 280 H 1180", fluid: "reag", run: "PU-901A" },
-      { k: "vessel", x: 40, y: 80, w: 70, h: 110, tag: "SL-901", head: "open", agitator: true, drive: "SL-901", fluid: "reag" },
-      { k: "text", x: 30, y: 70, text: "Lime slaker" },
-      { k: "vessel", x: 200, y: 60, w: 70, h: 140, tag: "TK-901", head: "dished", fluid: "reag", level: "LIT-901" },
-      { k: "vessel", x: 460, y: 60, w: 70, h: 140, tag: "TK-902", head: "dished", fluid: "reag", level: "LIT-902" },
-      { k: "vessel", x: 720, y: 60, w: 70, h: 140, tag: "TK-903", head: "dished", fluid: "reag", level: "LIT-903" },
-      { k: "vessel", x: 980, y: 60, w: 70, h: 140, tag: "TK-904", head: "dished", fluid: "reag", level: "LIT-904" },
-      { k: "bubble", x: 200, y: 240, tag: "LIT-901", loc: "field" },
-      { k: "bubble", x: 460, y: 240, tag: "LIT-902", loc: "field" },
-      { k: "bubble", x: 720, y: 240, tag: "LIT-903", loc: "field" },
-      { k: "bubble", x: 980, y: 240, tag: "LIT-904", loc: "field" },
-      { k: "pump", x: 235, y: 340, tag: "PU-901A", drive: "PU-901A" },
-      { k: "pump", x: 495, y: 340, tag: "PU-902A", drive: "PU-902A" },
-      { k: "pump", x: 755, y: 340, tag: "PU-903A", drive: "PU-903A" },
-      { k: "pump", x: 1015, y: 340, tag: "PU-904A", drive: "PU-904A" },
-      { k: "bubble", x: 300, y: 460, tag: "FIT-901", loc: "field" },
-      { k: "bubble", x: 500, y: 460, tag: "FIT-902", loc: "field" },
-      { k: "bubble", x: 720, y: 460, tag: "FIT-903", loc: "field" },
-      { k: "bubble", x: 960, y: 460, tag: "FIT-904", loc: "field" },
-      { k: "bubble", x: 40, y: 340, tag: "DIT-901", loc: "field" },
-      { k: "text", x: 200, y: 560, text: "PU-901A speed is the AC-520 output. Collector, frother and depressant dose on flow." },
+    note: "Each reagent tank doses through its own pump onto the common header that feeds flotation. Lime pump A is the pH-loop output.",
+    units: [
+      U({ tag: "SL-901", x: 36, y: 48, w: 130, h: 70, title: "Lime slaker", tone: "reag", drive: "SL-901" }),
+      U({ tag: "TK-901", x: 36, y: 150, w: 150, h: 120, title: "Lime", tone: "reag", read: "LIT-901" }),
+      U({ tag: "TK-902", x: 280, y: 150, w: 150, h: 120, title: "Collector", tone: "reag", read: "LIT-902" }),
+      U({ tag: "TK-903", x: 524, y: 150, w: 150, h: 120, title: "Frother", tone: "reag", read: "LIT-903" }),
+      U({ tag: "TK-904", x: 768, y: 150, w: 150, h: 120, title: "Depressant", tone: "reag", read: "LIT-904" }),
+      U({ tag: "PU-901A", x: 56, y: 340, w: 120, h: 56, title: "Lime pump", tone: "reag", drive: "PU-901A", read: "FIT-901" }),
+      U({ tag: "PU-902A", x: 300, y: 340, w: 120, h: 56, title: "Collector pump", tone: "reag", drive: "PU-902A", read: "FIT-902" }),
+      U({ tag: "PU-903A", x: 544, y: 340, w: 120, h: 56, title: "Frother pump", tone: "reag", drive: "PU-903A", read: "FIT-903" }),
+      U({ tag: "PU-904A", x: 788, y: 340, w: 120, h: 56, title: "Depressant pump", tone: "reag", drive: "PU-904A", read: "FIT-904" }),
+    ],
+    pipes: [
+      { d: "M 101 118 V 150", label: "Slaked lime", lx: 108, ly: 140 },
+      { d: "M 111 270 V 340" },
+      { d: "M 355 270 V 340" },
+      { d: "M 599 270 V 340" },
+      { d: "M 843 270 V 340" },
+      { d: "M 116 396 V 470 H 1140", label: "To flotation", lx: 980, ly: 458, run: "PU-901A" },
+      { d: "M 360 396 V 470" },
+      { d: "M 604 396 V 470" },
+      { d: "M 848 396 V 470" },
     ],
   },
   util: {
     drawing: "PID-950-001",
-    note: "Utilities P&ID. PC-951 holds the process-water header by the duty pump speed. Gland water and instrument air have a running standby. The diesel is a source, not a process load.",
-    items: [
-      { k: "line", d: "M 150 160 H 520", fluid: "water", run: "PU-951A" },
-      { k: "line", d: "M 700 160 H 1100", fluid: "air", run: "CA-971A" },
-      { k: "vessel", x: 30, y: 70, w: 80, h: 160, tag: "TK-951", head: "dished", fluid: "water", level: "LIT-951" },
-      { k: "bubble", x: 40, y: 270, tag: "LIT-951", loc: "field" },
-      { k: "pump", x: 180, y: 120, tag: "PU-951A", drive: "PU-951A" },
-      { k: "pump", x: 290, y: 120, tag: "PU-951B", drive: "PU-951B" },
-      { k: "pump", x: 400, y: 120, tag: "PU-951C", drive: "PU-951C" },
-      { k: "bubble", x: 180, y: 240, tag: "PIT-951", loc: "field" },
-      { k: "bubble", x: 340, y: 240, tag: "FIT-951", loc: "field" },
-      { k: "bubble", x: 500, y: 240, tag: "PC-951", loc: "dcs" },
-      { k: "text", x: 160, y: 60, text: "Process water, one duty and two standby" },
-      { k: "pump", x: 180, y: 400, tag: "PU-961A", drive: "PU-961A" },
-      { k: "pump", x: 300, y: 400, tag: "PU-961B", drive: "PU-961B" },
-      { k: "bubble", x: 430, y: 400, tag: "PIT-961", loc: "field" },
-      { k: "text", x: 160, y: 490, text: "Gland water, essential" },
-      { k: "compressor", x: 700, y: 120, tag: "CA-971A", drive: "CA-971A" },
-      { k: "compressor", x: 860, y: 120, tag: "CA-971B", drive: "CA-971B" },
-      { k: "bubble", x: 1000, y: 120, tag: "PIT-971", loc: "field" },
-      { k: "text", x: 680, y: 60, text: "Instrument air, duty / standby" },
-      { k: "pump", x: 700, y: 400, tag: "PU-981", drive: "PU-981" },
-      { k: "bubble", x: 840, y: 400, tag: "FIT-981", loc: "field" },
-      { k: "text", x: 680, y: 490, text: "Cooling water" },
-      { k: "diesel", x: 1040, y: 360, tag: "EDG-991", drive: "EDG-991" },
-      { k: "text", x: 1020, y: 450, text: "1,250 kW standby source" },
+    note: "Process water, gland water, instrument air and cooling water each leave on their own header. The diesel feeds the essential board only.",
+    units: [
+      U({ tag: "TK-951", x: 36, y: 70, w: 140, h: 140, title: "Process water tank", tone: "water", read: "LIT-951" }),
+      U({ tag: "PU-951A", x: 230, y: 48, w: 130, h: 52, title: "Water pump A", tone: "water", drive: "PU-951A", read: "PIT-951" }),
+      U({ tag: "PU-951B", x: 230, y: 114, w: 130, h: 52, title: "Water pump B", tone: "water", drive: "PU-951B" }),
+      U({ tag: "PU-951C", x: 230, y: 180, w: 130, h: 52, title: "Water pump C", tone: "water", drive: "PU-951C" }),
+      U({ tag: "PU-961A", x: 36, y: 280, w: 150, h: 48, title: "Gland pump A", tone: "water", drive: "PU-961A", read: "PIT-961" }),
+      U({ tag: "PU-961B", x: 210, y: 280, w: 150, h: 48, title: "Gland pump B", tone: "water", drive: "PU-961B" }),
+      U({ tag: "CA-971A", x: 36, y: 400, w: 160, h: 48, title: "Air compressor A", tone: "air", drive: "CA-971A", read: "PIT-971" }),
+      U({ tag: "CA-971B", x: 220, y: 400, w: 160, h: 48, title: "Air compressor B", tone: "air", drive: "CA-971B" }),
+      U({ tag: "PU-981", x: 36, y: 500, w: 180, h: 48, title: "Cooling water", tone: "water", drive: "PU-981", read: "FIT-981" }),
+      U({ tag: "EDG-991", x: 36, y: 556, w: 200, h: 48, title: "Diesel generator", tone: "power", drive: "EDG-991" }),
+    ],
+    pipes: [
+      { d: "M 176 74 H 230", kind: "water", run: "PU-951A" },
+      { d: "M 176 140 H 230", kind: "water" },
+      { d: "M 176 206 H 230", kind: "water" },
+      { d: "M 360 74 H 420", kind: "water", run: "PU-951A" },
+      { d: "M 360 140 H 420", kind: "water" },
+      { d: "M 360 206 H 420", kind: "water" },
+      { d: "M 420 74 V 206" },
+      { d: "M 420 120 H 1140", label: "Process water header", lx: 700, ly: 110, kind: "water", run: "PU-951A" },
+      { d: "M 111 328 V 364", kind: "water", run: "PU-961A" },
+      { d: "M 285 328 V 364", kind: "water" },
+      { d: "M 111 364 H 1140", label: "Gland water", lx: 700, ly: 354, kind: "water", run: "PU-961A" },
+      { d: "M 116 448 V 468", kind: "air", run: "CA-971A" },
+      { d: "M 300 448 V 468", kind: "air" },
+      { d: "M 116 468 H 1140", label: "Instrument air", lx: 700, ly: 460, kind: "air", run: "CA-971A" },
+      { d: "M 216 524 H 1140", label: "Cooling water", lx: 700, ly: 514, kind: "water", run: "PU-981" },
+      { d: "M 236 580 H 1140", label: "Essential board", lx: 700, ly: 570 },
     ],
   },
 };
 
 export function areaOfScreen(screen: string): Exclude<AreaId, "sys"> | null {
   return screen in SHEETS ? (screen as Exclude<AreaId, "sys">) : null;
-}
-
-export const SYMBOL_CARDS: { id: string; group: string; name: string; note: string }[] = [
-  { id: "field", group: "Instruments", name: "Field instrument", note: "Circle. Transmitter or local indicator." },
-  { id: "board", group: "Instruments", name: "Central control panel", note: "Circle with one horizontal line." },
-  { id: "panel", group: "Instruments", name: "Local control panel", note: "Circle with two horizontal lines." },
-  { id: "dcs", group: "Instruments", name: "Shared display, DCS", note: "Circle inside a square. Controller or drive value." },
-  { id: "computer", group: "Instruments", name: "Computer function", note: "Diamond. Analyser or calculated point." },
-  { id: "pump", group: "Pumps and drivers", name: "Centrifugal pump", note: "Circle and discharge nozzle, with the impeller." },
-  { id: "motor", group: "Pumps and drivers", name: "Electric motor", note: "Circle marked M, on the shaft of the driven machine." },
-  { id: "fan", group: "Pumps and drivers", name: "Centrifugal fan", note: "Circle with fan blades. Blowers use this symbol." },
-  { id: "compressor", group: "Pumps and drivers", name: "Centrifugal compressor", note: "Scroll with a discharge nozzle." },
-  { id: "diesel", group: "Pumps and drivers", name: "Diesel motor", note: "Engine block marked D, with the exhaust." },
-  { id: "cv", group: "Valves", name: "Control valve", note: "Bowtie with a pneumatic diaphragm. Fail position is in the note." },
-  { id: "cvm", group: "Valves", name: "Motor-operated valve", note: "Bowtie with an M actuator." },
-  { id: "cvs", group: "Valves", name: "Solenoid valve", note: "Bowtie with an S actuator." },
-  { id: "gate", group: "Valves", name: "Gate valve", note: "Bowtie with the gate drawn through the body." },
-  { id: "globe", group: "Valves", name: "Globe valve", note: "Bowtie with a filled seat." },
-  { id: "ball", group: "Valves", name: "Ball valve", note: "Bowtie with an open ball." },
-  { id: "check", group: "Valves", name: "Check valve", note: "Flow triangle and a downstream stop." },
-  { id: "butterfly", group: "Valves", name: "Butterfly valve", note: "Bowtie with the disc across the body." },
-  { id: "vessel", group: "Vessels", name: "Vertical vessel, dished ends", note: "Cylinder with elliptical heads." },
-  { id: "hopper", group: "Vessels", name: "Bin", note: "Hopper bottom. Used for the ROM bin." },
-  { id: "cone", group: "Vessels", name: "Cone-roof tank", note: "Roof and shell. Used for the concentrate pad." },
-  { id: "open", group: "Vessels", name: "Open tank", note: "Open top. Sumps, conditioner and stockpile pocket." },
-  { id: "crusher", group: "Process", name: "Cone crusher", note: "Outer shell and the mantle. Gyratory and pebble crusher." },
-  { id: "mill", group: "Process", name: "Tumbling mill", note: "Horizontal drum. SAG, ball and regrind." },
-  { id: "conveyor", group: "Process", name: "Belt conveyor", note: "Head and tail pulleys with the belt." },
-  { id: "cyclone", group: "Process", name: "Cyclone separator", note: "Body, cone and vortex finder." },
-  { id: "cell", group: "Process", name: "Flotation cell and agitator", note: "Open cell, froth band and turbine impeller." },
-  { id: "column", group: "Process", name: "Packed column", note: "Tall vessel with the packing marks." },
-  { id: "thickener", group: "Process", name: "Thickener", note: "Plan view, rake arms and the centre well." },
-  { id: "filter", group: "Process", name: "Filter", note: "Shell with the filter medium." },
-  { id: "magnet", group: "Process", name: "Permanent magnet", note: "Horseshoe over the belt." },
-  { id: "detector", group: "Process", name: "Specialty item", note: "Diamond. Tramp-metal detector." },
-  { id: "line", group: "Lines", name: "Major process line", note: "Solid line. Colour is the fluid." },
-  { id: "signal", group: "Lines", name: "Electrical signal", note: "Dashed line from a field device to the DCS bubble." },
-];
-
-export function SymbolTile({ id }: { id: string }) {
-  return (
-    <svg viewBox="-60 -56 120 112" className="symbol-svg">
-      <rect x="-60" y="-56" width="120" height="112" fill="#0c141b" />
-      {id === "field" ? <g transform="translate(0 0)"><BubbleGlyph loc="field" alarm={false} /></g> : null}
-      {id === "board" ? <BubbleGlyph loc="board" alarm={false} /> : null}
-      {id === "panel" ? <BubbleGlyph loc="panel" alarm={false} /> : null}
-      {id === "dcs" ? <BubbleGlyph loc="dcs" alarm={false} /> : null}
-      {id === "computer" ? <BubbleGlyph loc="computer" alarm={false} /> : null}
-      {id === "pump" ? <PumpGlyph dir="e" stroke={INK} /> : null}
-      {id === "motor" ? <Motor x={0} y={0} state="running" /> : null}
-      {id === "fan" ? (
-        <g stroke={INK} fill={PAPER}>
-          <circle r="18" />
-          <path d="M 0,-12 L 8,8 L -8,8 Z" />
-        </g>
-      ) : null}
-      {id === "compressor" ? (
-        <g stroke={INK} fill={PAPER}>
-          <circle r="16" />
-          <path d="M 4,-9 L 24,0 L 4,9 Z" />
-        </g>
-      ) : null}
-      {id === "diesel" ? (
-        <g stroke={INK} fill={PAPER}>
-          <rect x="-30" y="-16" width="60" height="32" />
-          <text y="5" textAnchor="middle" fontSize="12">D</text>
-        </g>
-      ) : null}
-      {id === "cv" ? <ValveGlyph form="control" act="air" /> : null}
-      {id === "cvm" ? <ValveGlyph form="control" act="motor" /> : null}
-      {id === "cvs" ? <ValveGlyph form="control" act="solenoid" /> : null}
-      {id === "gate" ? <ValveGlyph form="gate" /> : null}
-      {id === "globe" ? <ValveGlyph form="globe" /> : null}
-      {id === "ball" ? <ValveGlyph form="ball" /> : null}
-      {id === "check" ? <ValveGlyph form="check" /> : null}
-      {id === "butterfly" ? <ValveGlyph form="butterfly" /> : null}
-      {id === "vessel" ? (
-        <g stroke={INK} fill={PAPER}>
-          <ellipse cx="0" cy="-28" rx="22" ry="8" />
-          <rect x="-22" y="-28" width="44" height="56" />
-          <ellipse cx="0" cy="28" rx="22" ry="8" />
-        </g>
-      ) : null}
-      {id === "hopper" ? (
-        <g stroke={INK} fill={PAPER}>
-          <rect x="-20" y="-36" width="40" height="36" />
-          <polygon points="-20,0 20,0 12,28 -12,28" />
-        </g>
-      ) : null}
-      {id === "cone" ? (
-        <g stroke={INK} fill={PAPER}>
-          <polygon points="0,-36 -24,-16 24,-16" />
-          <rect x="-24" y="-16" width="48" height="40" />
-        </g>
-      ) : null}
-      {id === "open" ? (
-        <g stroke={INK} fill={PAPER}>
-          <line x1="-22" y1="-30" x2="22" y2="-30" />
-          <rect x="-22" y="-30" width="44" height="58" />
-        </g>
-      ) : null}
-      {id === "crusher" ? (
-        <g stroke={INK} fill={PAPER}>
-          <polygon points="-28,-30 28,-30 18,30 -18,30" />
-          <polygon points="0,-20 10,22 -10,22" />
-        </g>
-      ) : null}
-      {id === "mill" ? (
-        <g stroke={INK} fill={PAPER}>
-          <rect x="-24" y="-16" width="48" height="32" />
-          <ellipse cx="-24" cy="0" rx="12" ry="16" />
-          <ellipse cx="24" cy="0" rx="12" ry="16" />
-        </g>
-      ) : null}
-      {id === "conveyor" ? (
-        <g stroke={INK} fill={PAPER}>
-          <line x1="-30" y1="-8" x2="30" y2="-8" />
-          <line x1="-30" y1="8" x2="30" y2="8" />
-          <circle cx="-30" cy="0" r="8" />
-          <circle cx="30" cy="0" r="8" />
-        </g>
-      ) : null}
-      {id === "cyclone" ? (
-        <g stroke={INK} fill={PAPER}>
-          <rect x="-16" y="-28" width="32" height="14" />
-          <polygon points="-16,-14 16,-14 8,28 -8,28" />
-        </g>
-      ) : null}
-      {id === "cell" ? (
-        <g stroke={INK} fill={PAPER}>
-          <rect x="-22" y="-28" width="44" height="56" />
-          <line x1="0" y1="-28" x2="0" y2="16" />
-          <path d="M -12 12 L 0 22 L 12 12" fill="none" />
-        </g>
-      ) : null}
-      {id === "column" ? (
-        <g stroke={INK} fill={PAPER}>
-          <rect x="-12" y="-36" width="24" height="72" />
-          <line x1="-8" y1="-10" x2="8" y2="-10" strokeDasharray="2 2" />
-          <line x1="-8" y1="6" x2="8" y2="6" strokeDasharray="2 2" />
-        </g>
-      ) : null}
-      {id === "thickener" ? (
-        <g stroke={INK} fill={PAPER}>
-          <circle r="28" />
-          <line x1="-20" y1="0" x2="20" y2="0" />
-          <line x1="0" y1="-20" x2="0" y2="20" />
-          <circle r="5" />
-        </g>
-      ) : null}
-      {id === "filter" ? (
-        <g stroke={INK} fill={PAPER}>
-          <rect x="-28" y="-18" width="56" height="36" />
-          <line x1="-22" y1="12" x2="22" y2="-12" />
-        </g>
-      ) : null}
-      {id === "magnet" ? <path d="M -16 16 L -16 0 Q 0 -24 16 0 L 16 16" fill="none" stroke={INK} strokeWidth="3" /> : null}
-      {id === "detector" ? <polygon points="0,-16 16,0 0,16 -16,0" fill={PAPER} stroke={INK} /> : null}
-      {id === "line" ? <line x1="-40" y1="0" x2="40" y2="0" stroke="#8a5a32" strokeWidth="5" /> : null}
-      {id === "signal" ? <line x1="-40" y1="0" x2="40" y2="0" stroke="#9eb0c2" strokeWidth="1.4" strokeDasharray="4 3" /> : null}
-    </svg>
-  );
 }
